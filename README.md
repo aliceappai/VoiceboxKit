@@ -100,12 +100,6 @@ VoiceboxKit automatically attaches app identity and device context to every reco
 | `locale` | `Locale.current.identifier` |
 | `sdkVersion` | VoiceboxKit SDK version |
 
-Auto-collection is **on by default**. Opt out with:
-
-```swift
-VoiceboxKit.autoCollectAppContext = false
-```
-
 App-provided params always override auto-collected values (explicit wins over implicit).
 
 ## Passing Custom Params

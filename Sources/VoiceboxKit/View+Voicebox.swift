@@ -15,8 +15,26 @@ struct VoiceboxModifier: ViewModifier {
     var onMessageSubmitted: (() -> Void)?
     var onDismiss: (() -> Void)?
 
+    /// Tracks the background colour detected from the web page.
+    /// Seeded from the per-handle cache so re-opens use the correct colour immediately.
+    @State private var sheetBackground: Color = Color(uiColor: .systemBackground)
+
+    /// The colour to use for `presentationBackground` (controls the home-indicator strip).
+    /// - If the caller supplied an explicit `theme.backgroundColor`, that colour wins.
+    /// - Otherwise we use whatever JS detected from the web page.
+    private var effectivePresentationBackground: Color {
+        if let explicit = theme.backgroundColor {
+            return Color(uiColor: explicit)
+        }
+        return sheetBackground
+    }
+
     private func makeRepresentable() -> VoiceboxRepresentable {
-        VoiceboxRepresentable(
+        // Capture the Binding — it has reference semantics, so the closure
+        // always writes to the live @State storage even after the struct is copied.
+        let bgBinding = $sheetBackground
+        let needsDetection = theme.backgroundColor == nil
+        return VoiceboxRepresentable(
             handle: handle,
             params: params,
             theme: theme,
@@ -25,31 +43,46 @@ struct VoiceboxModifier: ViewModifier {
             autoGrantMicPermission: autoGrantMicPermission,
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
-            onDismiss: onDismiss
+            onDismiss: onDismiss,
+            onBackgroundColorDetected: needsDetection ? { color in
+                // Already dispatched to main in userContentController; update inline
+                // so the presentationBackground and skeleton stop in the same pass.
+                bgBinding.wrappedValue = Color(uiColor: color)
+            } : nil
         )
     }
 
     func body(content: Content) -> some View {
-        switch presentationMode {
-        case .fullScreen:
-            content.fullScreenCover(isPresented: $isPresented) {
-                makeRepresentable()
+        Group {
+            switch presentationMode {
+            case .fullScreen:
+                content.fullScreenCover(isPresented: $isPresented) {
+                    makeRepresentable()
+                }
+            case .bottomSheet:
+                content.sheet(isPresented: $isPresented) {
+                    applyDetents(makeRepresentable(), style: .mediumAndLarge)
+                }
+            case .sheet, .fitContent:
+                content.sheet(isPresented: $isPresented) {
+                    applyDetents(makeRepresentable(), style: .large)
+                }
+            case .custom(let height):
+                content.sheet(isPresented: $isPresented) {
+                    applyDetents(makeRepresentable(), style: .fixedHeight(height))
+                }
+            case .customFraction(let fraction):
+                content.sheet(isPresented: $isPresented) {
+                    applyDetents(makeRepresentable(), style: .fraction(fraction))
+                }
             }
-        case .bottomSheet:
-            content.sheet(isPresented: $isPresented) {
-                applyDetents(makeRepresentable(), style: .mediumAndLarge)
-            }
-        case .sheet, .fitContent:
-            content.sheet(isPresented: $isPresented) {
-                applyDetents(makeRepresentable(), style: .large)
-            }
-        case .custom(let height):
-            content.sheet(isPresented: $isPresented) {
-                applyDetents(makeRepresentable(), style: .fixedHeight(height))
-            }
-        case .customFraction(let fraction):
-            content.sheet(isPresented: $isPresented) {
-                applyDetents(makeRepresentable(), style: .fraction(fraction))
+        }
+        // When the sheet dismisses, reset the background so the next open always
+        // starts white — matching the skeleton's white background.
+        // The colour is re-detected and applied fresh once the page reloads.
+        .onChange(of: isPresented) { presented in
+            if !presented, theme.backgroundColor == nil {
+                sheetBackground = Color(uiColor: .systemBackground)
             }
         }
     }
@@ -68,12 +101,15 @@ struct VoiceboxModifier: ViewModifier {
                 .presentationDetents(detentSet(for: style))
                 .presentationCornerRadius(theme.resolvedCornerRadius)
                 .presentationDragIndicator(.visible)
+                .presentationBackground(effectivePresentationBackground)
         } else if #available(iOS 16.0, *) {
             view
                 .presentationDetents(detentSet(for: style))
                 .presentationDragIndicator(.visible)
+                .background(effectivePresentationBackground)
         } else {
             view
+                .background(effectivePresentationBackground)
         }
     }
 
@@ -105,6 +141,8 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
     var onDismiss: (() -> Void)?
+    /// Forwarded from `VoiceboxModifier` — updates `presentationBackground` reactively.
+    var onBackgroundColorDetected: ((UIColor) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -124,11 +162,14 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         voiceboxView.showCloseButton = showCloseButton
         voiceboxView.autoGrantMicPermission = autoGrantMicPermission
         voiceboxView.delegate = context.coordinator
-        return VoiceboxViewController(voiceboxView: voiceboxView)
+        let vc = VoiceboxViewController(voiceboxView: voiceboxView)
+        vc.onBackgroundColorDetected = onBackgroundColorDetected
+        return vc
     }
 
     func updateUIViewController(_ uiViewController: VoiceboxViewController, context: Context) {
-        // No dynamic updates needed
+        // Keep the callback in sync in case the SwiftUI tree re-renders.
+        uiViewController.onBackgroundColorDetected = onBackgroundColorDetected
     }
 
     // MARK: - Coordinator (Delegate Bridge)

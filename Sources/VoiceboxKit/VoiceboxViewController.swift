@@ -20,6 +20,12 @@ public final class VoiceboxViewController: UIViewController {
     private var registeredContentHeightHandler = false
     private static let contentHeightMessageName = "voiceboxContentHeight"
     private static let voiceboxEventMessageName = "voiceboxEvent"
+    private static let bgColorMessageName = "voiceboxBgColor"
+
+    /// Called on the main thread when JS detects the web page's background colour.
+    /// The SwiftUI layer uses this to update `presentationBackground` dynamically
+    /// so the home-indicator strip matches the page's actual colour.
+    var onBackgroundColorDetected: ((UIColor) -> Void)?
 
     /// Creates a view controller for the given VoiceboxView.
     ///
@@ -47,7 +53,12 @@ public final class VoiceboxViewController: UIViewController {
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = voiceboxView.theme.resolvedBackgroundColor
+        // Start with systemBackground so the sheet looks clean before JS detection
+        // fires. Once the page loads, applyWebBackgroundColor() overrides this
+        // with the web page's actual background colour.
+        // If the caller set an explicit backgroundColor, honour it.
+        // Otherwise default to systemBackground — JS detection will override once the page loads.
+        view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
         setupWebView()
         setupCloseButton()
         setupSkeletonView()
@@ -80,6 +91,10 @@ public final class VoiceboxViewController: UIViewController {
             usedPreloadedWebView = false
         }
 
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.underPageBackgroundColor = .clear
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
 
@@ -105,8 +120,9 @@ public final class VoiceboxViewController: UIViewController {
         webView.navigationDelegate = navigationDelegate
         webView.uiDelegate = self
 
-        // Register message handler for Voicebox events
+        // Register message handlers
         webView.configuration.userContentController.add(self, name: Self.voiceboxEventMessageName)
+        webView.configuration.userContentController.add(self, name: Self.bgColorMessageName)
 
         // Inject JS to observe recorder button clicks and postMessage events
         let eventScript = WKUserScript(
@@ -162,13 +178,10 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     deinit {
-        webView?.configuration.userContentController.removeScriptMessageHandler(
-            forName: Self.voiceboxEventMessageName
-        )
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.voiceboxEventMessageName)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.bgColorMessageName)
         if registeredContentHeightHandler {
-            webView?.configuration.userContentController.removeScriptMessageHandler(
-                forName: Self.contentHeightMessageName
-            )
+            webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.contentHeightMessageName)
         }
     }
 
@@ -256,11 +269,54 @@ public final class VoiceboxViewController: UIViewController {
         if isLoading {
             skeletonView.startAnimating()
         } else {
-            skeletonView.stopAnimating()
+            if voiceboxView.theme.backgroundColor == nil {
+                // Keep the skeleton visible while JS detects the page colour.
+                // applyWebBackgroundColor() will stop it once the colour is set,
+                // so there's no white-strip flash between skeleton fade-out and colour update.
+                // Safety net: force-stop after 1 s in case detection never fires (JS error, etc.).
+                detectWebBackgroundColor()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.skeletonView.stopAnimating()
+                }
+            } else {
+                skeletonView.stopAnimating()
+            }
             if voiceboxView.presentationMode == .fitContent {
                 measureContentHeight()
             }
         }
+    }
+
+    private func detectWebBackgroundColor() {
+        // Only auto-detect when the caller hasn't pinned an explicit background colour.
+        // If theme.backgroundColor is set, the caller owns the colour — don't override it.
+        guard voiceboxView.theme.backgroundColor == nil else { return }
+        let js = """
+        (function() {
+            var bg = window.getComputedStyle(document.documentElement).backgroundColor;
+            if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') {
+                bg = window.getComputedStyle(document.body).backgroundColor;
+            }
+            window.webkit.messageHandlers.\(Self.bgColorMessageName).postMessage(bg);
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    private func applyWebBackgroundColor(_ cssColor: String) {
+        guard let color = UIColor(cssString: cssColor),
+              color.cgColor.alpha > 0.01 else {
+            // Detection fired but returned transparent/invalid — unblock the skeleton.
+            skeletonView.stopAnimating()
+            return
+        }
+        view.backgroundColor = color
+        // Notify the SwiftUI layer so it can update presentationBackground
+        // to match — this closes the gap for the home-indicator strip at the bottom.
+        onBackgroundColorDetected?(color)
+        // Stop the skeleton now that the correct colour is in place.
+        // The skeleton was kept visible in handleLoadingState to avoid a white-strip flash.
+        skeletonView.stopAnimating()
     }
 
     // MARK: - Content Height (fitContent)
@@ -420,6 +476,11 @@ extension VoiceboxViewController: WKScriptMessageHandler {
                 updateSheetHeight(height)
             }
 
+        case Self.bgColorMessageName:
+            if let css = message.body as? String {
+                DispatchQueue.main.async { self.applyWebBackgroundColor(css) }
+            }
+
         default:
             break
         }
@@ -452,5 +513,29 @@ extension VoiceboxViewController: WKUIDelegate {
         } else {
             decisionHandler(.prompt)
         }
+    }
+}
+
+// MARK: - UIColor CSS parsing
+
+private extension UIColor {
+
+    /// Parses `rgb(r, g, b)` or `rgba(r, g, b, a)` returned by
+    /// `window.getComputedStyle(...).backgroundColor` into a UIColor.
+    convenience init?(cssString: String) {
+        let s = cssString.trimmingCharacters(in: .whitespaces)
+        guard s.hasPrefix("rgb"),
+              let open = s.firstIndex(of: "("),
+              let close = s.lastIndex(of: ")")
+        else { return nil }
+
+        let inner = String(s[s.index(after: open)..<close])
+        let parts = inner
+            .components(separatedBy: ",")
+            .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+
+        guard parts.count >= 3 else { return nil }
+        let alpha = parts.count == 4 ? parts[3] : 1.0
+        self.init(red: parts[0] / 255, green: parts[1] / 255, blue: parts[2] / 255, alpha: alpha)
     }
 }

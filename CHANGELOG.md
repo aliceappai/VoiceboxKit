@@ -5,6 +5,20 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2]
+
+### Changed
+
+- `VoiceboxKit.baseURL` is now a public mutable property (was internal `let`),
+  so host apps can point the SDK at a non-production environment such as
+  staging. Defaults to `https://vbx.to`. Set once at app launch before any
+  `preload(handle:)` or `.voicebox(...)` call.
+- Navigation allowlist now accepts the configured `baseURL` host (and its
+  subdomains) in addition to the existing `vbx.to` and `voicebox.ai`
+  production domains. Fixes staging builds where loads to non-production
+  hosts were silently cancelled (`NSURLErrorCancelled`, `-999`), causing a
+  white screen on first sheet open.
+
 ## [1.0.0]
 
 ### Added

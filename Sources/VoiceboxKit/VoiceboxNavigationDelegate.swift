@@ -27,9 +27,12 @@ final class VoiceboxNavigationDelegate: NSObject, WKNavigationDelegate {
             return
         }
 
-        // Allow Voicebox domains (vbx.to and app.voicebox.ai)
+        // Allow the configured baseURL host plus production Voicebox domains.
+        let configuredHost = URL(string: VoiceboxKit.baseURL)?.host
         if let host = url.host,
-           host.hasSuffix("vbx.to") || host.hasSuffix("voicebox.ai") {
+           host.hasSuffix("vbx.to")
+            || host.hasSuffix("voicebox.ai")
+            || (configuredHost.map { host == $0 || host.hasSuffix(".\($0)") } ?? false) {
 
             // Fallback: detect navigation to /sent/ URL pattern
             if url.path.contains("/sent/") {

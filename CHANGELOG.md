@@ -5,6 +5,26 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3]
+
+### Fixed
+
+- Coloured strip below the page in `.bottomSheet`, `.sheet`, `.fitContent`,
+  `.custom`, and `.customFraction` modes. The SwiftUI sheet's
+  `presentationBackground` was painting the home-indicator strip below where
+  the WebView ended, so the page's body / background-image stopped short and
+  the underlying CSS fallback colour leaked through. The WebView now extends
+  into the bottom safe area via `.ignoresSafeArea(.container, edges: .bottom)`,
+  so the page's body covers the strip.
+- Same strip issue at the bottom of `.fullScreen` mode — `fullScreenCover`
+  now also applies `.ignoresSafeArea(edges: .bottom)`.
+- Wrong colour detected on iOS (e.g. blue strip when the web page showed
+  grey). iOS WKWebView returns a non-transparent value for
+  `getComputedStyle(documentElement).backgroundColor` even when only `<body>`
+  is styled. The detection JS now reads `<body>` first and falls back to
+  `<html>` only if body is transparent — `<body>` is what the customize
+  helper actually styles, so it is the source of truth.
+
 ## [1.0.2]
 
 ### Changed

@@ -58,6 +58,7 @@ struct VoiceboxModifier: ViewModifier {
             case .fullScreen:
                 content.fullScreenCover(isPresented: $isPresented) {
                     makeRepresentable()
+                        .ignoresSafeArea(edges: .bottom)
                 }
             case .bottomSheet:
                 content.sheet(isPresented: $isPresented) {
@@ -98,17 +99,20 @@ struct VoiceboxModifier: ViewModifier {
     private func applyDetents(_ view: VoiceboxRepresentable, style: DetentStyle) -> some View {
         if #available(iOS 16.4, *) {
             view
+                .ignoresSafeArea(.container, edges: .bottom)
                 .presentationDetents(detentSet(for: style))
                 .presentationCornerRadius(theme.resolvedCornerRadius)
                 .presentationDragIndicator(.visible)
                 .presentationBackground(effectivePresentationBackground)
         } else if #available(iOS 16.0, *) {
             view
+                .ignoresSafeArea(.container, edges: .bottom)
                 .presentationDetents(detentSet(for: style))
                 .presentationDragIndicator(.visible)
                 .background(effectivePresentationBackground)
         } else {
             view
+                .ignoresSafeArea(.container, edges: .bottom)
                 .background(effectivePresentationBackground)
         }
     }

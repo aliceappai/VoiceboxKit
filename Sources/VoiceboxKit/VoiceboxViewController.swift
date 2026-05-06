@@ -293,9 +293,9 @@ public final class VoiceboxViewController: UIViewController {
         guard voiceboxView.theme.backgroundColor == nil else { return }
         let js = """
         (function() {
-            var bg = window.getComputedStyle(document.documentElement).backgroundColor;
+            var bg = window.getComputedStyle(document.body).backgroundColor;
             if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') {
-                bg = window.getComputedStyle(document.body).backgroundColor;
+                bg = window.getComputedStyle(document.documentElement).backgroundColor;
             }
             window.webkit.messageHandlers.\(Self.bgColorMessageName).postMessage(bg);
         })();

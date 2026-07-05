@@ -1,7 +1,7 @@
 import SwiftUI
 import VoiceboxKit
 
-/// Example showing all four presentation modes with dismiss callback.
+/// Example showing the presentation modes (incl. the floating `.overlay`) with dismiss callback.
 struct ContentView: View {
     @State private var showVoicebox = false
     @State private var showFullScreen = false
@@ -59,6 +59,11 @@ struct ContentView: View {
 
                     modeButton("Fit Content", icon: "arrow.up.and.down.text.horizontal") {
                         selectedMode = .fitContent
+                        showVoicebox = true
+                    }
+
+                    modeButton("Overlay (floating)", icon: "bubble.left.and.bubble.right.fill") {
+                        selectedMode = .overlay
                         showVoicebox = true
                     }
                 }

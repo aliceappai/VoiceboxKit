@@ -76,6 +76,13 @@ struct VoiceboxModifier: ViewModifier {
                 content.sheet(isPresented: $isPresented) {
                     applyDetents(makeRepresentable(), style: .fraction(fraction))
                 }
+            case .overlay:
+                // Transparent cover so the shaped recorder floats over the app;
+                // the representable's controller draws the dimmed backdrop and
+                // runs the slide-up / grow-shrink / swipe-to-dismiss itself.
+                content.fullScreenCover(isPresented: $isPresented) {
+                    overlayCover(makeRepresentable())
+                }
             }
         }
         // When the sheet dismisses, reset the background so the next open always
@@ -85,6 +92,18 @@ struct VoiceboxModifier: ViewModifier {
             if !presented, theme.backgroundColor == nil {
                 sheetBackground = Color(uiColor: .systemBackground)
             }
+        }
+    }
+
+    /// Wraps the overlay representable in a clear-background full-screen cover so
+    /// the live app shows through around the floating shape (iOS 16.4+); older
+    /// versions fall back to the system cover background.
+    @ViewBuilder
+    private func overlayCover(_ view: VoiceboxRepresentable) -> some View {
+        if #available(iOS 16.4, *) {
+            view.ignoresSafeArea().presentationBackground(.clear)
+        } else {
+            view.ignoresSafeArea()
         }
     }
 

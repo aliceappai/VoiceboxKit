@@ -26,6 +26,22 @@ final class URLConstructionTests: XCTestCase {
         XCTAssertEqual(url.path, "/@alice-feedback")
     }
 
+    func testOverlayModeAddsOverlayParam() {
+        let vb = VoiceboxView(handle: "test")
+        vb.presentationMode = .overlay
+        let components = URLComponents(url: vb.buildURL(), resolvingAgainstBaseURL: false)!
+        let overlay = (components.queryItems ?? []).first { $0.name == "overlay" }
+        XCTAssertEqual(overlay?.value, "1")
+    }
+
+    func testNonOverlayModeOmitsOverlayParam() {
+        let vb = VoiceboxView(handle: "test")
+        vb.presentationMode = .bottomSheet
+        let components = URLComponents(url: vb.buildURL(), resolvingAgainstBaseURL: false)!
+        let overlay = (components.queryItems ?? []).first { $0.name == "overlay" }
+        XCTAssertNil(overlay)
+    }
+
     func testUTMParamsAlwaysPresent() {
         let vb = VoiceboxView(handle: "test")
         let url = vb.buildURL()

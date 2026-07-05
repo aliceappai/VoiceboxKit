@@ -5,6 +5,18 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `.overlay` presentation mode: a transparent, shaped "floating" recorder. The
+  head-and-shoulders silhouette (via the web `overlay=1` mode) floats over a
+  dimmed backdrop instead of a rectangular sheet — card-width and centred, it
+  slides up from the bottom, grows/shrinks from the bottom as the web content
+  changes, and dismisses on backdrop tap (including the transparent corners
+  beside the head) or a downward swipe. Use `presentationMode: .overlay` or
+  `presentAsOverlay(from:)`.
+
 ## [1.0.3]
 
 ### Fixed

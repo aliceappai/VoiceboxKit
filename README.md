@@ -147,6 +147,11 @@ All values must be `String`. They're URL-encoded and appended to `https://vbx.to
 
 // Fraction of screen height (iOS 16+)
 .voicebox(isPresented: $show, handle: "feedback", presentationMode: .customFraction(0.6))
+
+// Transparent, shaped "floating" overlay: the head-and-shoulders recorder
+// floats over a dimmed backdrop, slides up from the bottom, grows/shrinks with
+// its content, and dismisses on backdrop tap or swipe-down.
+.voicebox(isPresented: $show, handle: "feedback", presentationMode: .overlay)
 ```
 
 All custom-height modes fall back to `.sheet` on iOS 15. `.customFraction` values are clamped to `[0.1, 1.0]`.

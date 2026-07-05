@@ -65,4 +65,21 @@ final class PresentationModeTests: XCTestCase {
         vb.presentationMode = .customFraction(0.75)
         XCTAssertEqual(vb.presentationMode, .customFraction(0.75))
     }
+
+    // MARK: - Overlay mode
+
+    func testOverlayModeExistsAndEquatable() {
+        let mode = VoiceboxPresentationMode.overlay
+        XCTAssertEqual("\(mode)", "overlay")
+        XCTAssertEqual(VoiceboxPresentationMode.overlay, .overlay)
+        XCTAssertNotEqual(VoiceboxPresentationMode.overlay, .fitContent)
+    }
+
+    func testConvenienceOverlaySetsMode() {
+        let vb = VoiceboxView(handle: "test")
+        vb.presentationMode = .fullScreen
+        // presentAsOverlay(from:) requires a presenter; assert the mode assignment path.
+        vb.presentationMode = .overlay
+        XCTAssertEqual(vb.presentationMode, .overlay)
+    }
 }

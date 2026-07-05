@@ -18,6 +18,22 @@ public final class VoiceboxViewController: UIViewController {
     private var usedPreloadedWebView = false
     private var hasAppeared = false
     private var registeredContentHeightHandler = false
+
+    // MARK: Overlay presentation (.overlay)
+
+    private var isOverlay: Bool { voiceboxView.presentationMode == .overlay }
+    /// Dimmed backdrop; tapping it (or the transparent corners that fall through
+    /// to it) dismisses. Card-width WebView host that is hit-tested to the
+    /// silhouette. Bottom-pinned height that animates as the content resizes.
+    private var overlayScrim: UIView?
+    private var overlayContainer: VoiceboxOverlayContainerView?
+    private var overlayHeightConstraint: NSLayoutConstraint?
+    private var overlayDidSlideIn = false
+    private var overlaySilhouette = VoiceboxOverlaySilhouette()
+    private static let overlayCardWidth = VoiceboxOverlaySilhouette.contentWidth
+    private static let overlaySideMargin: CGFloat = 12
+    private static let overlayBottomInset: CGFloat = 8
+    private static let overlayScrimAlpha: CGFloat = 0.45
     private static let contentHeightMessageName = "voiceboxContentHeight"
     private static let voiceboxEventMessageName = "voiceboxEvent"
     private static let bgColorMessageName = "voiceboxBgColor"
@@ -58,7 +74,9 @@ public final class VoiceboxViewController: UIViewController {
         // with the web page's actual background colour.
         // If the caller set an explicit backgroundColor, honour it.
         // Otherwise default to systemBackground — JS detection will override once the page loads.
-        view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
+        // Overlay mode paints nothing behind the shape: clear root + dimmed scrim.
+        view.backgroundColor = isOverlay ? .clear : (voiceboxView.theme.backgroundColor ?? .systemBackground)
+        if isOverlay { setupOverlayScrim() }
         setupWebView()
         setupCloseButton()
         setupSkeletonView()
@@ -68,6 +86,7 @@ public final class VoiceboxViewController: UIViewController {
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
+        if isOverlay { slideInOverlayIfNeeded() }
     }
 
     public override func viewDidDisappear(_ animated: Bool) {
@@ -96,14 +115,18 @@ public final class VoiceboxViewController: UIViewController {
         webView.scrollView.backgroundColor = .clear
         webView.underPageBackgroundColor = .clear
         webView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(webView)
 
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: view.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
+        if isOverlay {
+            layoutWebViewForOverlay()
+        } else {
+            view.addSubview(webView)
+            NSLayoutConstraint.activate([
+                webView.topAnchor.constraint(equalTo: view.topAnchor),
+                webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+        }
 
         navigationDelegate = VoiceboxNavigationDelegate(handle: voiceboxView.handle)
         navigationDelegate.onLoadingStateChanged = { [weak self] isLoading in
@@ -167,8 +190,10 @@ public final class VoiceboxViewController: UIViewController {
         )
         webView.configuration.userContentController.addUserScript(eventScript)
 
-        // For fitContent mode, register message handler to receive content height
-        if voiceboxView.presentationMode == .fitContent {
+        // fitContent + overlay both size to the web content height. Overlay
+        // additionally receives *continuous* updates (the web streams height on
+        // every ResizeObserver change) so the shape grows/shrinks from the bottom.
+        if voiceboxView.presentationMode == .fitContent || isOverlay {
             webView.configuration.userContentController.add(
                 self,
                 name: Self.contentHeightMessageName
@@ -217,13 +242,25 @@ public final class VoiceboxViewController: UIViewController {
         button.accessibilityLabel = "Close"
         button.accessibilityTraits = .button
 
+        // In overlay mode pin the close button to the card (via the container),
+        // and add it to `view` as a sibling above the container so the silhouette
+        // hit-testing never swallows its taps.
         view.addSubview(button)
-        NSLayoutConstraint.activate([
-            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            button.widthAnchor.constraint(equalToConstant: buttonSize),
-            button.heightAnchor.constraint(equalToConstant: buttonSize),
-        ])
+        if isOverlay, let container = overlayContainer {
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: container.topAnchor, constant: overlaySilhouette.cardTop + 8),
+                button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                button.widthAnchor.constraint(equalToConstant: buttonSize),
+                button.heightAnchor.constraint(equalToConstant: buttonSize),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+                button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+                button.widthAnchor.constraint(equalToConstant: buttonSize),
+                button.heightAnchor.constraint(equalToConstant: buttonSize),
+            ])
+        }
 
         self.closeButton = button
     }
@@ -233,8 +270,21 @@ public final class VoiceboxViewController: UIViewController {
         skeletonView.translatesAutoresizingMaskIntoConstraints = false
         skeletonView.isHidden = true
         skeletonView.backgroundColor = voiceboxView.theme.resolvedBackgroundColor
-        view.addSubview(skeletonView)
 
+        // Overlay: the skeleton lives inside the card container (not full-screen,
+        // which would paint an opaque rectangle over the dimmed backdrop).
+        if isOverlay, let container = overlayContainer {
+            container.insertSubview(skeletonView, belowSubview: webView)
+            NSLayoutConstraint.activate([
+                skeletonView.topAnchor.constraint(equalTo: container.topAnchor),
+                skeletonView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                skeletonView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                skeletonView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ])
+            return
+        }
+
+        view.addSubview(skeletonView)
         NSLayoutConstraint.activate([
             skeletonView.topAnchor.constraint(equalTo: view.topAnchor),
             skeletonView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -268,6 +318,11 @@ public final class VoiceboxViewController: UIViewController {
     private func handleLoadingState(_ isLoading: Bool) {
         if isLoading {
             skeletonView.startAnimating()
+        } else if isOverlay {
+            // Nothing opaque to colour-match in overlay mode. Stop the skeleton
+            // and take an initial height reading; the web then streams updates.
+            skeletonView.stopAnimating()
+            measureContentHeight()
         } else {
             if voiceboxView.theme.backgroundColor == nil {
                 // Keep the skeleton visible while JS detects the page colour.
@@ -351,6 +406,143 @@ public final class VoiceboxViewController: UIViewController {
                 sheet.selectedDetentIdentifier = customDetent.identifier
             }
         }
+    }
+
+    // MARK: - Overlay presentation (.overlay)
+
+    private func setupOverlayScrim() {
+        let scrim = UIView()
+        scrim.translatesAutoresizingMaskIntoConstraints = false
+        scrim.backgroundColor = UIColor.black.withAlphaComponent(0) // fades in on slide-up
+        view.addSubview(scrim)
+        NSLayoutConstraint.activate([
+            scrim.topAnchor.constraint(equalTo: view.topAnchor),
+            scrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        scrim.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(overlayScrimTapped))
+        )
+        overlayScrim = scrim
+    }
+
+    private func layoutWebViewForOverlay() {
+        let container = VoiceboxOverlayContainerView()
+        container.silhouette = overlaySilhouette
+        container.backgroundColor = .clear
+        container.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(container)
+
+        container.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        // Card-width, centred, pinned above the home indicator. Height animates
+        // from the reported content height; width clamps on narrow screens.
+        let screenWidth = UIScreen.main.bounds.width
+        let width = min(Self.overlayCardWidth, screenWidth - Self.overlaySideMargin * 2)
+        let heightConstraint = container.heightAnchor.constraint(equalToConstant: 420)
+        overlayHeightConstraint = heightConstraint
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: width),
+            container.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            container.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                constant: -Self.overlayBottomInset
+            ),
+            heightConstraint,
+        ])
+        overlayContainer = container
+
+        // Start off-screen until viewDidAppear slides it up.
+        container.transform = CGAffineTransform(translationX: 0, y: 1000)
+
+        container.addGestureRecognizer(
+            UIPanGestureRecognizer(target: self, action: #selector(handleOverlayPan(_:)))
+        )
+    }
+
+    private func slideInOverlayIfNeeded() {
+        guard let container = overlayContainer, !overlayDidSlideIn else { return }
+        overlayDidSlideIn = true
+        view.layoutIfNeeded()
+        let offset = container.bounds.height + view.safeAreaInsets.bottom + Self.overlayBottomInset
+        container.transform = CGAffineTransform(translationX: 0, y: offset)
+        UIView.animate(
+            withDuration: 0.38, delay: 0,
+            usingSpringWithDamping: 0.9, initialSpringVelocity: 0.4,
+            options: [.curveEaseOut]
+        ) {
+            container.transform = .identity
+            self.overlayScrim?.backgroundColor = UIColor.black.withAlphaComponent(Self.overlayScrimAlpha)
+        }
+    }
+
+    private func updateOverlayHeight(_ contentHeight: CGFloat) {
+        guard let constraint = overlayHeightConstraint else { return }
+        let available = view.bounds.height - view.safeAreaInsets.top - view.safeAreaInsets.bottom - 24
+        let target = min(max(contentHeight, 120), max(160, available))
+        guard abs(constraint.constant - target) > 0.5 else { return }
+        constraint.constant = target
+        // Skip animating the very first sizing (still off-screen pre-slide-in).
+        guard overlayDidSlideIn else { view.layoutIfNeeded(); return }
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseInOut]) {
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    @objc private func overlayScrimTapped() {
+        animateOverlayOutAndDismiss(velocity: 0)
+    }
+
+    @objc private func handleOverlayPan(_ recognizer: UIPanGestureRecognizer) {
+        guard let container = overlayContainer else { return }
+        let translationY = recognizer.translation(in: view).y
+
+        switch recognizer.state {
+        case .changed:
+            let clamped = max(0, translationY)
+            container.transform = CGAffineTransform(translationX: 0, y: clamped)
+            let progress = min(1, clamped / max(1, container.bounds.height))
+            overlayScrim?.backgroundColor =
+                UIColor.black.withAlphaComponent(Self.overlayScrimAlpha * (1 - progress))
+        case .ended, .cancelled:
+            let velocityY = recognizer.velocity(in: view).y
+            if translationY > container.bounds.height * 0.3 || velocityY > 800 {
+                animateOverlayOutAndDismiss(velocity: velocityY)
+            } else {
+                UIView.animate(withDuration: 0.25) {
+                    container.transform = .identity
+                    self.overlayScrim?.backgroundColor =
+                        UIColor.black.withAlphaComponent(Self.overlayScrimAlpha)
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    private func animateOverlayOutAndDismiss(velocity: CGFloat) {
+        guard let container = overlayContainer else {
+            dismiss(animated: true)
+            return
+        }
+        let distance = container.bounds.height + view.safeAreaInsets.bottom + Self.overlayBottomInset
+        UIView.animate(
+            withDuration: 0.28, delay: 0, options: [.curveEaseIn],
+            animations: {
+                container.transform = CGAffineTransform(translationX: 0, y: distance)
+                self.overlayScrim?.backgroundColor = UIColor.black.withAlphaComponent(0)
+            },
+            completion: { _ in
+                self.dismiss(animated: false)
+            }
+        )
     }
 
     private func handleLoadError(_ error: Error) {
@@ -446,7 +638,11 @@ public final class VoiceboxViewController: UIViewController {
     // MARK: - Actions
 
     @objc private func closeTapped() {
-        dismiss(animated: true)
+        if isOverlay {
+            animateOverlayOutAndDismiss(velocity: 0)
+        } else {
+            dismiss(animated: true)
+        }
     }
 }
 
@@ -472,8 +668,13 @@ extension VoiceboxViewController: WKScriptMessageHandler {
             }
 
         case Self.contentHeightMessageName:
-            if let height = message.body as? CGFloat {
-                updateSheetHeight(height)
+            let height = (message.body as? CGFloat) ?? CGFloat((message.body as? NSNumber)?.doubleValue ?? 0)
+            if height > 0 {
+                if isOverlay {
+                    updateOverlayHeight(height)
+                } else {
+                    updateSheetHeight(height)
+                }
             }
 
         case Self.bgColorMessageName:

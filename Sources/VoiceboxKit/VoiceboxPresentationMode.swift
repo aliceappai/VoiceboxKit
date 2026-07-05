@@ -35,4 +35,14 @@ public enum VoiceboxPresentationMode: Equatable {
     ///
     /// Requires iOS 16+. Falls back to `.sheet` on iOS 15.
     case customFraction(CGFloat)
+
+    /// Transparent, shaped "floating" overlay.
+    ///
+    /// Instead of a rectangular sheet, the recorder's own head-and-shoulders
+    /// silhouette (rendered transparently via the web `overlay=1` mode) floats
+    /// above a dimmed backdrop. It's centred at card width, slides up from the
+    /// bottom, and grows/shrinks from the bottom as the web content changes.
+    /// Tapping the dimmed area — including the transparent corners beside the
+    /// head — dismisses; a downward swipe dismisses too.
+    case overlay
 }

@@ -81,6 +81,11 @@ public final class VoiceboxView {
             merged[key] = value
         }
 
+        // Overlay presentation needs the transparent, self-sizing web mode.
+        if presentationMode == .overlay {
+            merged["overlay"] = "1"
+        }
+
         var queryItems = merged.map { key, value in
             URLQueryItem(name: key, value: value)
         }
@@ -228,6 +233,13 @@ public final class VoiceboxView {
                 sheet.prefersGrabberVisible = true
                 sheet.preferredCornerRadius = theme.resolvedCornerRadius
             }
+        case .overlay:
+            // No system sheet: present transparently over the full screen so the
+            // shaped recorder floats above the still-visible presenter. The
+            // controller draws its own dimmed backdrop and runs the slide-up /
+            // grow-shrink / swipe-to-dismiss itself.
+            vc.modalPresentationStyle = .overFullScreen
+            vc.modalTransitionStyle = .crossDissolve
         }
 
         viewController.present(vc, animated: true)
@@ -242,6 +254,12 @@ public final class VoiceboxView {
     /// Convenience: present as a full-screen modal.
     public func presentFullScreen(from viewController: UIViewController) {
         presentationMode = .fullScreen
+        present(from: viewController)
+    }
+
+    /// Convenience: present as a transparent, shaped floating overlay.
+    public func presentAsOverlay(from viewController: UIViewController) {
+        presentationMode = .overlay
         present(from: viewController)
     }
 }

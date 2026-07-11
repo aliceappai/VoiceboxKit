@@ -43,16 +43,31 @@ public enum VoiceboxKit {
 
     /// Prefetch and cache the Voicebox page for the given handle.
     ///
-    /// Call this once during app launch so the WebView loads instantly
-    /// when the user taps a button.
+    /// Call this once during app launch (or as soon as the destination screen
+    /// appears) so the WebView loads instantly when the user taps a button.
+    ///
+    /// - Important: Pass the **same `params`** you'll later pass to
+    ///   `.voicebox(handle:params:...)` / `VoiceboxView(handle:params:...)`.
+    ///   The preloaded WebView is only reused if the resulting URL matches
+    ///   exactly (including auto-collected app context and UTM tags) — a
+    ///   mismatched `params` means the sheet falls back to a fresh load and
+    ///   the loading skeleton shows, same as if `preload` was never called.
     ///
     /// ```swift
     /// // In AppDelegate or App.init
     /// VoiceboxKit.preload(handle: "alice-feedback")
+    ///
+    /// // If the sheet is opened with params, preload with the SAME params:
+    /// let params = ["email": user.email, "prompt": prompt]
+    /// VoiceboxKit.preload(handle: "alice-feedback", params: params)
+    /// // ... later ...
+    /// view.voicebox(isPresented: $show, handle: "alice-feedback", params: params)
     /// ```
     ///
-    /// - Parameter handle: The Voicebox handle to preload.
-    public static func preload(handle: String) {
-        VoiceboxCache.shared.preload(handle: handle)
+    /// - Parameters:
+    ///   - handle: The Voicebox handle to preload.
+    ///   - params: The exact params the sheet will be opened with. Defaults to none.
+    public static func preload(handle: String, params: [String: String] = [:]) {
+        VoiceboxCache.shared.preload(handle: handle, params: params)
     }
 }

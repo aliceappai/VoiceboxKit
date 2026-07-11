@@ -80,8 +80,11 @@ public final class VoiceboxViewController: UIViewController {
     // MARK: - Setup
 
     private func setupWebView() {
-        // Try to reuse a preloaded WebView for instant display
-        if let preloaded = VoiceboxCache.shared.consumePreloadedWebView(for: voiceboxView.handle) {
+        // Try to reuse a preloaded WebView — only a hit if it was warmed with
+        // this EXACT URL (same handle + params); otherwise a mismatched preload
+        // (e.g. different email/prompt) would silently show stale content.
+        let targetURL = voiceboxView.buildURL()
+        if let preloaded = VoiceboxCache.shared.consumePreloadedWebView(for: voiceboxView.handle, matching: targetURL) {
             webView = preloaded
             usedPreloadedWebView = true
             // Apply visual settings that makeWebView() would normally set
@@ -247,8 +250,13 @@ public final class VoiceboxViewController: UIViewController {
 
     private func loadVoicebox() {
         if usedPreloadedWebView {
-            let url = voiceboxView.buildURL()
-            webView.load(URLRequest(url: url))
+            // Safe to skip the reload entirely: `VoiceboxCache.consumePreloadedWebView`
+            // only ever hands back a WebView whose background navigation already
+            // finished SUCCESSFULLY at this exact URL (tracked via its own
+            // temporary navigation delegate during warm-up) — a still-loading or
+            // failed preload is never returned, so there's no blank-sheet risk
+            // here. The content is already rendered; just clear the skeleton.
+            handleLoadingState(false)
             return
         }
 
@@ -341,6 +349,10 @@ public final class VoiceboxViewController: UIViewController {
 
         let safeAreaTop = view.safeAreaInsets.top
         let totalHeight = contentHeight + safeAreaTop + 20
+
+        // Remember this for next time so a future `.fitContent` open can start
+        // at roughly the right size instead of always flashing full-screen.
+        VoiceboxCache.shared.setCachedContentHeight(totalHeight, for: voiceboxView.handle)
 
         if #available(iOS 16.0, *) {
             let customDetent = UISheetPresentationController.Detent.custom { context in

@@ -5,6 +5,26 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4]
+
+### Fixed
+
+- `preload(handle:)` had no way to match the URL the recording sheet would
+  actually request — the sheet always adds `params`, auto-collected app
+  context, and UTM tags to build its URL, so a preloaded page built from a
+  bare `handle` never matched, and every sheet open silently fell back to a
+  full network load with the loading skeleton shown, regardless of preload.
+  `preload(handle:params:)` now takes the same `params` the sheet will use,
+  so the URLs can actually match.
+- A preloaded WebView is now only reused once its background load is
+  confirmed to have finished successfully. Previously, a preload that failed
+  silently before a navigation delegate was attached could be mistaken for a
+  successful load once consumed, showing a blank sheet with no offline/retry
+  UI.
+- `.fitContent` sheets now open at roughly the size measured on the last
+  successful load for that handle, instead of always starting full-screen
+  and shrinking down after the page finishes loading.
+
 ## [1.0.3]
 
 ### Fixed

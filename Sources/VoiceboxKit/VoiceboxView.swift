@@ -63,37 +63,10 @@ public final class VoiceboxView {
 
     /// Builds the full Voicebox URL with params and UTM tags.
     ///
-    /// Merge order (lowest to highest precedence):
-    /// 1. Auto-collected app context (if `VoiceboxKit.autoCollectAppContext == true`)
-    /// 2. App-provided `params` (always win over auto-collected)
-    /// 3. UTM tags (always appended last)
+    /// Delegates to `VoiceboxURLBuilder` so this always matches whatever
+    /// `VoiceboxCache.preload(handle:params:)` warmed for the same handle + params.
     func buildURL() -> URL {
-        var components = URLComponents(string: "\(VoiceboxKit.baseURL)/@\(handle)")!
-
-        // Start with auto-collected context (if enabled)
-        var merged: [String: String] = [:]
-        if VoiceboxKit.autoCollectAppContext {
-            merged = VoiceboxAppContext.collect()
-        }
-
-        // App-provided params override any auto-collected values (explicit > implicit)
-        for (key, value) in params {
-            merged[key] = value
-        }
-
-        var queryItems = merged.map { key, value in
-            URLQueryItem(name: key, value: value)
-        }
-
-        // Sort for deterministic URLs (easier to test and cache)
-        queryItems.sort { $0.name < $1.name }
-
-        // Append UTM params
-        queryItems.append(URLQueryItem(name: "utm_source", value: "voiceboxkit"))
-        queryItems.append(URLQueryItem(name: "utm_medium", value: "ios_sdk"))
-
-        components.queryItems = queryItems
-        return components.url!
+        VoiceboxURLBuilder.build(handle: handle, params: params)
     }
 
     // MARK: - WebView Factory

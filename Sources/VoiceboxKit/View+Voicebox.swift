@@ -64,9 +64,13 @@ struct VoiceboxModifier: ViewModifier {
                 content.sheet(isPresented: $isPresented) {
                     applyDetents(makeRepresentable(), style: .mediumAndLarge)
                 }
-            case .sheet, .fitContent:
+            case .sheet:
                 content.sheet(isPresented: $isPresented) {
                     applyDetents(makeRepresentable(), style: .large)
+                }
+            case .fitContent:
+                content.sheet(isPresented: $isPresented) {
+                    applyDetents(makeRepresentable(), style: initialFitContentStyle)
                 }
             case .custom(let height):
                 content.sheet(isPresented: $isPresented) {
@@ -93,6 +97,19 @@ struct VoiceboxModifier: ViewModifier {
         case large
         case fixedHeight(CGFloat)
         case fraction(CGFloat)
+    }
+
+    /// Best starting size for `.fitContent`: the height measured the last time
+    /// this handle finished loading (see `VoiceboxCache.cachedContentHeight`),
+    /// so a slow/uncached load doesn't have to flash full-screen before
+    /// shrinking to fit. Falls back to `.large` the first time a handle is
+    /// ever opened — there's nothing to go on yet. Either way, the real
+    /// measurement after load corrects this once the page finishes.
+    private var initialFitContentStyle: DetentStyle {
+        if let cachedHeight = VoiceboxCache.shared.cachedContentHeight(for: handle) {
+            return .fixedHeight(cachedHeight)
+        }
+        return .large
     }
 
     @ViewBuilder

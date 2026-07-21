@@ -27,6 +27,11 @@ public final class VoiceboxViewController: UIViewController {
     /// so the home-indicator strip matches the page's actual colour.
     var onBackgroundColorDetected: ((UIColor) -> Void)?
 
+    /// Fired once when this controller has finished disappearing (dismissed) —
+    /// used by the SwiftUI `.floatingCard` presenter to sync its `isPresented`
+    /// binding back to `false` when the card dismisses itself (tap-outside).
+    var onDidDismissSelf: (() -> Void)?
+
     /// Creates a view controller for the given VoiceboxView.
     ///
     /// - Parameter voiceboxView: The configured VoiceboxView instance. Alternatively, use
@@ -58,7 +63,13 @@ public final class VoiceboxViewController: UIViewController {
         // with the web page's actual background colour.
         // If the caller set an explicit backgroundColor, honour it.
         // Otherwise default to systemBackground — JS detection will override once the page loads.
-        view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
+        // Floating card: the container MUST be clear so the (transparent) presentation
+        // shows through — the dim around the card is painted by the web page, not here.
+        if case .floatingCard = voiceboxView.presentationMode {
+            view.backgroundColor = .clear
+        } else {
+            view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
+        }
         setupWebView()
         setupCloseButton()
         setupSkeletonView()
@@ -74,6 +85,7 @@ public final class VoiceboxViewController: UIViewController {
         super.viewDidDisappear(animated)
         if hasAppeared {
             voiceboxView.delegate?.voiceboxDidDismiss(voiceboxView)
+            onDidDismissSelf?()
         }
     }
 
@@ -89,6 +101,12 @@ public final class VoiceboxViewController: UIViewController {
             usedPreloadedWebView = true
             // Apply visual settings that makeWebView() would normally set
             voiceboxView.applyWebViewSettings(webView)
+            // The preloaded page is ALREADY loaded, so applyWebViewSettings'
+            // WKUserScript (which only fires on the next navigation) won't run
+            // on it. Inject the chrome CSS directly into the live DOM now, or
+            // the footer/background hiding would only work on fresh loads —
+            // the source of the "sometimes shows chrome, sometimes not" flakiness.
+            voiceboxView.applyChromeCSSNow(to: webView)
         } else {
             webView = voiceboxView.makeWebView()
             usedPreloadedWebView = false
@@ -478,6 +496,10 @@ extension VoiceboxViewController: WKScriptMessageHandler {
                     voiceboxView.delegate?.voiceboxDidFinishRecording(voiceboxView)
                 case "messageSubmitted":
                     voiceboxView.delegate?.voiceboxDidSubmitMessage(voiceboxView)
+                case "dismiss":
+                    // Tap-outside-the-card in `.floatingCard` mode (there's no
+                    // native swipe-down here). Dismiss the presented controller.
+                    dismiss(animated: true)
                 default:
                     break
                 }

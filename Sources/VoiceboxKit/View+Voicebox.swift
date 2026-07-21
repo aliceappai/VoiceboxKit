@@ -10,6 +10,12 @@ struct VoiceboxModifier: ViewModifier {
     var theme: VoiceboxTheme
     var presentationMode: VoiceboxPresentationMode
     var showCloseButton: Bool
+    /// Whether the sheet's drag grabber (the pill at the top edge) is shown.
+    /// Set `false` for a "just the card" look with no native sheet chrome.
+    var showDragIndicator: Bool
+    /// Forwarded to `VoiceboxView.hidePageChrome` — hides the recorder page's
+    /// own footer + background via CSS injection. See that property's docs.
+    var hidePageChrome: Bool
     var autoGrantMicPermission: Bool?
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
@@ -40,6 +46,7 @@ struct VoiceboxModifier: ViewModifier {
             theme: theme,
             presentationMode: presentationMode,
             showCloseButton: showCloseButton,
+            hidePageChrome: hidePageChrome,
             autoGrantMicPermission: autoGrantMicPermission,
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
@@ -60,6 +67,15 @@ struct VoiceboxModifier: ViewModifier {
                     makeRepresentable()
                         .ignoresSafeArea(edges: .bottom)
                 }
+            case .floatingCard:
+                // Presented via UIKit `.overFullScreen` + `.crossDissolve` (see
+                // FloatingCardPresenter) rather than a sheet or fullScreenCover:
+                // no UISheetPresentationController → no glass backdrop, AND the
+                // transition is a fade (present + dismiss) instead of the tell-tale
+                // sheet slide-up. The dim/card layout is painted by the web page.
+                content.background(
+                    FloatingCardPresenter(isPresented: $isPresented, build: makeFloatingCardController)
+                )
             case .bottomSheet:
                 content.sheet(isPresented: $isPresented) {
                     applyDetents(makeRepresentable(), style: .mediumAndLarge)
@@ -92,6 +108,25 @@ struct VoiceboxModifier: ViewModifier {
         }
     }
 
+    /// Builds a fully-configured `VoiceboxViewController` for `.floatingCard`
+    /// presentation, plus the bridging delegate that must be retained alongside
+    /// it (`VoiceboxView.delegate` is `weak`). Returned to `FloatingCardPresenter`,
+    /// which presents the controller over the current context with a crossfade.
+    private func makeFloatingCardController() -> (VoiceboxViewController, AnyObject) {
+        let coordinator = VoiceboxRepresentable.Coordinator(
+            onRecordingComplete: onRecordingComplete,
+            onMessageSubmitted: onMessageSubmitted,
+            onDismiss: onDismiss
+        )
+        let vbView = VoiceboxView(handle: handle, params: params, theme: theme)
+        vbView.presentationMode = presentationMode
+        vbView.showCloseButton = showCloseButton
+        vbView.hidePageChrome = hidePageChrome
+        vbView.autoGrantMicPermission = autoGrantMicPermission
+        vbView.delegate = coordinator
+        return (VoiceboxViewController(voiceboxView: vbView), coordinator)
+    }
+
     private enum DetentStyle {
         case mediumAndLarge
         case large
@@ -112,20 +147,36 @@ struct VoiceboxModifier: ViewModifier {
         return .large
     }
 
+    /// `true` when the caller explicitly wants a transparent sheet (e.g. `theme.backgroundColor = .clear`).
+    /// `presentationBackground(_:)` substitutes its own system blur/vibrancy material whenever it's
+    /// given a fully-transparent color — there's no flag to opt out of that. Falling back to a plain
+    /// `.background()` (same as the pre-iOS-16.4 path below) instead avoids that substitution and
+    /// paints genuine transparency, at the cost of `presentationBackground`'s home-indicator-strip
+    /// coloring, which no longer matters once the caller has asked for "no chrome" anyway.
+    private var wantsTrueTransparency: Bool {
+        (theme.backgroundColor?.cgColor.alpha ?? 1) <= 0.001
+    }
+
     @ViewBuilder
     private func applyDetents(_ view: VoiceboxRepresentable, style: DetentStyle) -> some View {
-        if #available(iOS 16.4, *) {
+        if wantsTrueTransparency, #available(iOS 16.0, *) {
+            view
+                .ignoresSafeArea(.container, edges: .bottom)
+                .presentationDetents(detentSet(for: style))
+                .presentationDragIndicator(showDragIndicator ? .visible : .hidden)
+                .background(effectivePresentationBackground)
+        } else if #available(iOS 16.4, *) {
             view
                 .ignoresSafeArea(.container, edges: .bottom)
                 .presentationDetents(detentSet(for: style))
                 .presentationCornerRadius(theme.resolvedCornerRadius)
-                .presentationDragIndicator(.visible)
+                .presentationDragIndicator(showDragIndicator ? .visible : .hidden)
                 .presentationBackground(effectivePresentationBackground)
         } else if #available(iOS 16.0, *) {
             view
                 .ignoresSafeArea(.container, edges: .bottom)
                 .presentationDetents(detentSet(for: style))
-                .presentationDragIndicator(.visible)
+                .presentationDragIndicator(showDragIndicator ? .visible : .hidden)
                 .background(effectivePresentationBackground)
         } else {
             view
@@ -158,6 +209,7 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
     var theme: VoiceboxTheme
     var presentationMode: VoiceboxPresentationMode
     var showCloseButton: Bool
+    var hidePageChrome: Bool
     var autoGrantMicPermission: Bool?
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
@@ -181,6 +233,7 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         )
         voiceboxView.presentationMode = presentationMode
         voiceboxView.showCloseButton = showCloseButton
+        voiceboxView.hidePageChrome = hidePageChrome
         voiceboxView.autoGrantMicPermission = autoGrantMicPermission
         voiceboxView.delegate = context.coordinator
         let vc = VoiceboxViewController(voiceboxView: voiceboxView)
@@ -225,6 +278,68 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
     }
 }
 
+// MARK: - Floating Card Presenter
+
+/// Drives a UIKit `.overFullScreen` + `.crossDissolve` presentation of the
+/// Voicebox controller from a SwiftUI `isPresented` binding — used only by
+/// `.floatingCard`. A sheet/`fullScreenCover` would either add the system glass
+/// backdrop (sheet) or slide up from the bottom (cover); this fades in and out
+/// with no glass, matching the "floating card" look.
+///
+/// It's placed in the content's `.background`, so its host controller sits in
+/// the view hierarchy and can present modally over the whole window.
+private struct FloatingCardPresenter: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    /// Builds the controller to present plus the delegate to retain (the
+    /// controller's `VoiceboxView.delegate` is `weak`).
+    let build: () -> (VoiceboxViewController, AnyObject)
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        UIViewController()
+    }
+
+    func updateUIViewController(_ host: UIViewController, context: Context) {
+        let coordinator = context.coordinator
+        if isPresented {
+            // Present once — guard against re-presenting on every SwiftUI update.
+            guard coordinator.presented == nil else { return }
+            let (vc, delegate) = build()
+            coordinator.presented = vc
+            coordinator.retainedDelegate = delegate
+            vc.modalPresentationStyle = .overFullScreen
+            vc.modalTransitionStyle = .crossDissolve
+            // Tap-outside dismiss (or any self-dismiss): sync the binding back.
+            vc.onDidDismissSelf = { [weak coordinator] in
+                coordinator?.presented = nil
+                coordinator?.retainedDelegate = nil
+                if isPresented { isPresented = false }
+            }
+            DispatchQueue.main.async {
+                // Present from the top-most controller so we never try to
+                // present while something else already is.
+                var presenter: UIViewController = host
+                while let next = presenter.presentedViewController { presenter = next }
+                guard presenter.presentedViewController == nil else { return }
+                presenter.present(vc, animated: true)
+            }
+        } else if let vc = coordinator.presented {
+            // Binding-driven dismiss: tear down without re-entering the
+            // self-dismiss path (we've already reflected the state).
+            coordinator.presented = nil
+            coordinator.retainedDelegate = nil
+            vc.onDidDismissSelf = nil
+            vc.dismiss(animated: true)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var presented: VoiceboxViewController?
+        var retainedDelegate: AnyObject?
+    }
+}
+
 // MARK: - View Extension
 
 public extension View {
@@ -249,6 +364,10 @@ public extension View {
     ///   - theme: Visual theme. Uses defaults if omitted.
     ///   - presentationMode: How to present the Voicebox. Default is `.bottomSheet`.
     ///   - showCloseButton: Whether to show the close button. Default is `true`.
+    ///   - showDragIndicator: Whether the sheet's drag grabber is shown. Default is `true`.
+    ///   - hidePageChrome: Hides the recorder page's own footer + background via CSS
+    ///     injection, for a "just the card" look. Default is `false`. See
+    ///     `VoiceboxView.hidePageChrome` for caveats.
     ///   - autoGrantMicPermission: Per-instance mic permission override. `nil` uses global default.
     ///   - onRecordingComplete: Called when the user finishes recording.
     ///   - onMessageSubmitted: Called when the recording is submitted/saved.
@@ -260,6 +379,8 @@ public extension View {
         theme: VoiceboxTheme = VoiceboxTheme(),
         presentationMode: VoiceboxPresentationMode = .bottomSheet,
         showCloseButton: Bool = true,
+        showDragIndicator: Bool = true,
+        hidePageChrome: Bool = false,
         autoGrantMicPermission: Bool? = nil,
         onRecordingComplete: (() -> Void)? = nil,
         onMessageSubmitted: (() -> Void)? = nil,
@@ -273,6 +394,8 @@ public extension View {
                 theme: theme,
                 presentationMode: presentationMode,
                 showCloseButton: showCloseButton,
+                showDragIndicator: showDragIndicator,
+                hidePageChrome: hidePageChrome,
                 autoGrantMicPermission: autoGrantMicPermission,
                 onRecordingComplete: onRecordingComplete,
                 onMessageSubmitted: onMessageSubmitted,

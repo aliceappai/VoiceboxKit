@@ -15,6 +15,20 @@ public final class VoiceboxViewController: UIViewController {
     private var closeButton: UIButton?
     private var offlineView: VoiceboxOfflineView?
     private var skeletonView: VoiceboxSkeletonView!
+    /// In `.floatingCard` mode the sheet shimmer (full-width bars + mic circle)
+    /// reads as broken — its bars float over the transparent, centered card with
+    /// the real content bleeding through. There we show a card-shaped skeleton
+    /// (avatar badge + card placeholder) instead, matching where the card appears.
+    private var cardSkeletonView: VoiceboxCardSkeletonView?
+    private var isFloatingCard: Bool {
+        if case .floatingCard = voiceboxView.presentationMode { return true }
+        return false
+    }
+    /// The floating card's dim, so the skeleton's backdrop can match it.
+    private var floatingCardDim: CGFloat {
+        if case .floatingCard(let dim) = voiceboxView.presentationMode { return CGFloat(dim) }
+        return 0
+    }
     private var usedPreloadedWebView = false
     private var hasAppeared = false
     private var registeredContentHeightHandler = false
@@ -118,6 +132,10 @@ public final class VoiceboxViewController: UIViewController {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.underPageBackgroundColor = .clear
+        // Floating card: start hidden so a fresh (non-preloaded) load shows only
+        // the card skeleton until the page is ready — `stopLoading()` reveals it.
+        // The preloaded path calls stopLoading() immediately, so no visible delay.
+        webView.alpha = isFloatingCard ? 0 : 1
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
 
@@ -213,6 +231,9 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     private func setupSkeletonView() {
+        // Always create the skeleton (keeps the `stopLoading()` calls safe), but
+        // in floating-card mode it stays hidden/unused — a centered spinner is
+        // shown instead (see `startLoading()`).
         skeletonView = VoiceboxSkeletonView()
         skeletonView.translatesAutoresizingMaskIntoConstraints = false
         skeletonView.isHidden = true
@@ -225,6 +246,45 @@ public final class VoiceboxViewController: UIViewController {
             skeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             skeletonView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+
+        guard isFloatingCard else { return }
+        let cardSkeleton = VoiceboxCardSkeletonView()
+        cardSkeleton.dimOpacity = floatingCardDim
+        cardSkeleton.translatesAutoresizingMaskIntoConstraints = false
+        cardSkeleton.isHidden = true
+        view.addSubview(cardSkeleton)
+        NSLayoutConstraint.activate([
+            cardSkeleton.topAnchor.constraint(equalTo: view.topAnchor),
+            cardSkeleton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cardSkeleton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cardSkeleton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        cardSkeletonView = cardSkeleton
+    }
+
+    /// Routes the loading indicator to the presentation-appropriate skeleton: the
+    /// card-shaped shimmer for `.floatingCard`, the full-width shimmer otherwise.
+    ///
+    /// For the floating card the skeleton's surround is transparent, so the real
+    /// (differently-sized) WebView card would peek out behind it — a doubled-card
+    /// look. Hide the WebView while the skeleton is up and reveal it as the
+    /// skeleton fades, so the transition is skeleton → card, never both at once.
+    private func startLoading() {
+        if isFloatingCard {
+            webView.alpha = 0
+            cardSkeletonView?.startAnimating()
+        } else {
+            skeletonView.startAnimating()
+        }
+    }
+
+    private func stopLoading() {
+        if isFloatingCard {
+            webView.alpha = 1
+            cardSkeletonView?.stopAnimating()
+        } else {
+            skeletonView.stopAnimating()
+        }
     }
 
     // MARK: - Loading
@@ -245,9 +305,14 @@ public final class VoiceboxViewController: UIViewController {
         let cache = VoiceboxCache.shared
 
         if cache.hasCachedContent(for: voiceboxView.handle) {
+            // Floating card hides the WebView until ready, so show the skeleton
+            // even for a cached load or there'd be a blank frame before the
+            // navigation delegate's isLoading callback arrives. (Sheets keep the
+            // old behaviour: their skeleton stays hidden for a fast cached load.)
+            if isFloatingCard { startLoading() }
             webView.load(URLRequest(url: url))
         } else if isNetworkAvailable() {
-            skeletonView.startAnimating()
+            startLoading()
             webView.load(URLRequest(url: url))
         } else {
             showOfflineView()
@@ -256,7 +321,7 @@ public final class VoiceboxViewController: UIViewController {
 
     private func handleLoadingState(_ isLoading: Bool) {
         if isLoading {
-            skeletonView.startAnimating()
+            startLoading()
         } else {
             if voiceboxView.theme.backgroundColor == nil {
                 // Keep the skeleton visible while JS detects the page colour.
@@ -265,10 +330,10 @@ public final class VoiceboxViewController: UIViewController {
                 // Safety net: force-stop after 1 s in case detection never fires (JS error, etc.).
                 detectWebBackgroundColor()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.skeletonView.stopAnimating()
+                    self?.stopLoading()
                 }
             } else {
-                skeletonView.stopAnimating()
+                stopLoading()
             }
             if voiceboxView.presentationMode == .fitContent {
                 measureContentHeight()
@@ -296,7 +361,7 @@ public final class VoiceboxViewController: UIViewController {
         guard let color = UIColor(cssString: cssColor),
               color.cgColor.alpha > 0.01 else {
             // Detection fired but returned transparent/invalid — unblock the skeleton.
-            skeletonView.stopAnimating()
+            stopLoading()
             return
         }
         view.backgroundColor = color
@@ -305,7 +370,7 @@ public final class VoiceboxViewController: UIViewController {
         onBackgroundColorDetected?(color)
         // Stop the skeleton now that the correct colour is in place.
         // The skeleton was kept visible in handleLoadingState to avoid a white-strip flash.
-        skeletonView.stopAnimating()
+        stopLoading()
     }
 
     // MARK: - Content Height (fitContent)
@@ -347,7 +412,7 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     private func handleLoadError(_ error: Error) {
-        skeletonView.stopAnimating()
+        stopLoading()
         let nsError = error as NSError
 
         voiceboxView.delegate?.voiceboxDidFail(voiceboxView, error: error)

@@ -12,7 +12,6 @@ final class VoiceboxCache {
     static let shared = VoiceboxCache()
 
     private let defaults = UserDefaults.standard
-    private let session: URLSession
 
     /// A preloaded WebView paired with the exact URL it was warmed with, plus
     /// whether its background navigation actually finished successfully.
@@ -55,21 +54,9 @@ final class VoiceboxCache {
     /// Preloaded WebViews keyed by handle, ready for immediate display.
     private var preloadedWebViews: [String: PreloadedEntry] = [:]
 
-    private init() {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 10
-        self.session = URLSession(configuration: config)
-    }
+    private init() {}
 
     // MARK: - UserDefaults Keys
-
-    private func etagKey(for handle: String) -> String {
-        "com.voiceboxkit.cache.etag.\(handle)"
-    }
-
-    private func lastModifiedKey(for handle: String) -> String {
-        "com.voiceboxkit.cache.lastModified.\(handle)"
-    }
 
     private func cachedKey(for handle: String) -> String {
         "com.voiceboxkit.cache.hasCachedContent.\(handle)"
@@ -143,115 +130,28 @@ final class VoiceboxCache {
 
     // MARK: - Preload
 
-    /// Fetches and caches the Voicebox page for the given handle + params.
+    /// Warms and caches the Voicebox page for the given handle + params.
     ///
-    /// Makes a full GET request, stores the ETag/Last-Modified for future
-    /// validation, and creates a ready-to-use WKWebView. The WKWebView
-    /// persistent data store handles the actual asset caching.
+    /// A single `WKWebView` load populates the persistent data store and creates
+    /// a ready-to-use WebView — no separate `URLSession` fetch. The WebView load
+    /// uses the default cache policy, so a repeat warm is served from the HTTP
+    /// cache and revalidated per the server's cache headers, which is what makes
+    /// re-opens fast.
     ///
     /// - Important: `params` must match what the sheet will be opened with —
     ///   the URL built here (via `VoiceboxURLBuilder`) is the exact cache key
     ///   `consumePreloadedWebView(for:matching:)` checks against.
     func preload(handle: String, params: [String: String] = [:]) {
         let url = VoiceboxURLBuilder.build(handle: handle, params: params)
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-
-        let task = session.dataTask(with: request) { [weak self] _, response, error in
-            guard let self, error == nil, let httpResponse = response as? HTTPURLResponse else {
-                return
-            }
-
-            // Store cache validators
-            if let etag = httpResponse.value(forHTTPHeaderField: "ETag") {
-                self.defaults.set(etag, forKey: self.etagKey(for: handle))
-            }
-            if let lastModified = httpResponse.value(forHTTPHeaderField: "Last-Modified") {
-                self.defaults.set(lastModified, forKey: self.lastModifiedKey(for: handle))
-            }
-
-            self.markCached(handle: handle)
-
-            // Create a ready-to-use WKWebView with the content loaded
-            DispatchQueue.main.async {
-                self.warmWebViewCache(handle: handle, url: url)
-            }
+        // WebView creation must be on the main thread; `preload` may be called
+        // from anywhere. Skip if a warm for this exact URL is already in flight
+        // or ready, so repeated preloads (appear + prompt-change + foreground)
+        // don't churn WebViews.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let existing = self.preloadedWebViews[handle], existing.url == url { return }
+            self.warmWebViewCache(handle: handle, url: url)
         }
-        task.resume()
-
-        // Also validate cache in parallel if we already have cached content
-        if hasCachedContent(for: handle) {
-            validateCache(handle: handle, url: url)
-
-            // If we already have cached content, warm a WebView immediately
-            // (it will load from the WKWebView disk cache)
-            DispatchQueue.main.async { [weak self] in
-                if self?.preloadedWebViews[handle] == nil {
-                    self?.warmWebViewCache(handle: handle, url: url)
-                }
-            }
-        }
-    }
-
-    // MARK: - Cache Validation
-
-    /// Makes a HEAD request to check if the server content has changed.
-    ///
-    /// Compares ETag/Last-Modified from the response against stored values.
-    /// If they differ, re-fetches the full content in the background.
-    private func validateCache(handle: String, url: URL) {
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-
-        let task = session.dataTask(with: request) { [weak self] _, response, error in
-            guard let self, error == nil, let httpResponse = response as? HTTPURLResponse else {
-                return
-            }
-
-            let storedEtag = self.defaults.string(forKey: self.etagKey(for: handle))
-            let storedLastModified = self.defaults.string(forKey: self.lastModifiedKey(for: handle))
-
-            let serverEtag = httpResponse.value(forHTTPHeaderField: "ETag")
-            let serverLastModified = httpResponse.value(forHTTPHeaderField: "Last-Modified")
-
-            var isStale = false
-
-            if let serverEtag, let storedEtag {
-                isStale = serverEtag != storedEtag
-            } else if let serverLastModified, let storedLastModified {
-                isStale = serverLastModified != storedLastModified
-            }
-
-            if isStale {
-                // Re-fetch in background
-                self.refetch(handle: handle, url: url)
-            }
-        }
-        task.resume()
-    }
-
-    /// Re-fetches the full content for a handle and updates cache validators.
-    private func refetch(handle: String, url: URL) {
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-
-        let task = session.dataTask(with: request) { [weak self] _, response, error in
-            guard let self, error == nil, let httpResponse = response as? HTTPURLResponse else {
-                return
-            }
-
-            if let etag = httpResponse.value(forHTTPHeaderField: "ETag") {
-                self.defaults.set(etag, forKey: self.etagKey(for: handle))
-            }
-            if let lastModified = httpResponse.value(forHTTPHeaderField: "Last-Modified") {
-                self.defaults.set(lastModified, forKey: self.lastModifiedKey(for: handle))
-            }
-
-            DispatchQueue.main.async {
-                self.warmWebViewCache(handle: handle, url: url)
-            }
-        }
-        task.resume()
     }
 
     // MARK: - WebView Cache Warming
@@ -261,10 +161,10 @@ final class VoiceboxCache {
     /// below sees the navigation actually finish. Until then (or if it fails)
     /// `consumePreloadedWebView` won't hand it out.
     private func warmWebViewCache(handle: String, url: URL) {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
+        // Same configuration a live WebView gets (shared scripts + process pool +
+        // data store), so the warmed page has the recorder event observers etc.
+        // already active and is byte-for-byte reusable when adopted.
+        let config = VoiceboxWebScripts.makeConfiguration()
 
         let webView = WKWebView(frame: .zero, configuration: config)
         let observer = WarmupObserver()
@@ -276,6 +176,10 @@ final class VoiceboxCache {
         observer.onFinish = { [weak self, weak webView] in
             guard let self, let webView, self.preloadedWebViews[handle]?.webView === webView else { return }
             self.preloadedWebViews[handle]?.isReady = true
+            // Mark cached only once a warm has actually succeeded, so
+            // `hasCachedContent` (which suppresses the loading skeleton on a
+            // cache-first open) can't be true before anything is really cached.
+            self.markCached(handle: handle)
         }
         observer.onFail = { [weak self, weak webView] in
             guard let self, let webView, self.preloadedWebViews[handle]?.webView === webView else { return }

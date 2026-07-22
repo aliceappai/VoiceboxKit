@@ -18,9 +18,11 @@ public final class VoiceboxViewController: UIViewController {
     private var usedPreloadedWebView = false
     private var hasAppeared = false
     private var registeredContentHeightHandler = false
-    private static let contentHeightMessageName = "voiceboxContentHeight"
-    private static let voiceboxEventMessageName = "voiceboxEvent"
-    private static let bgColorMessageName = "voiceboxBgColor"
+    // Share the names with the baked-in user scripts (VoiceboxWebScripts) so a
+    // warmed WebView's scripts post to the same handlers this controller registers.
+    private static let contentHeightMessageName = VoiceboxWebScripts.contentHeightMessageName
+    private static let voiceboxEventMessageName = VoiceboxWebScripts.eventMessageName
+    private static let bgColorMessageName = VoiceboxWebScripts.bgColorMessageName
 
     /// Called on the main thread when JS detects the web page's background colour.
     /// The SwiftUI layer uses this to update `presentationBackground` dynamically
@@ -141,52 +143,13 @@ public final class VoiceboxViewController: UIViewController {
         webView.navigationDelegate = navigationDelegate
         webView.uiDelegate = self
 
-        // Register message handlers
+        // Register message handlers. The scripts that POST to them
+        // (`VoiceboxWebScripts.eventUserScript`) are baked into the shared
+        // configuration for both fresh and warmed WebViews, so — unlike before —
+        // a reused preloaded WebView already has the recorder observers active
+        // and just needs its handler registered here.
         webView.configuration.userContentController.add(self, name: Self.voiceboxEventMessageName)
         webView.configuration.userContentController.add(self, name: Self.bgColorMessageName)
-
-        // Inject JS to observe recorder button clicks and postMessage events
-        let eventScript = WKUserScript(
-            source: """
-            (function() {
-                var handler = window.webkit.messageHandlers.\(Self.voiceboxEventMessageName);
-
-                // Listen for postMessage events (works when embedded in iframe)
-                window.addEventListener('message', function(event) {
-                    if (!event.data || !event.data.type) return;
-                    if (event.data.type === 'voicebox:recordingComplete') handler.postMessage('recordingComplete');
-                    if (event.data.type === 'voicebox:messageSubmitted') handler.postMessage('messageSubmitted');
-                });
-
-                // Observe button clicks (works in direct WKWebView)
-                var observed = { save: false, send: false };
-                function attachListeners() {
-                    // "Save" button — stops recording & uploads
-                    var saveBtn = document.getElementById('record-btn-send');
-                    if (saveBtn && !observed.save) {
-                        observed.save = true;
-                        saveBtn.addEventListener('click', function() {
-                            handler.postMessage('recordingComplete');
-                        });
-                    }
-                    // "Send" button — submits the edit form
-                    var sendBtn = document.querySelector('[data-recorder--recorder-target="editSubmitButton"]');
-                    if (sendBtn && !observed.send) {
-                        observed.send = true;
-                        sendBtn.addEventListener('click', function() {
-                            handler.postMessage('messageSubmitted');
-                        });
-                    }
-                }
-                attachListeners();
-                new MutationObserver(function() { attachListeners(); })
-                    .observe(document.documentElement, { childList: true, subtree: true });
-            })();
-            """,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        webView.configuration.userContentController.addUserScript(eventScript)
 
         // For fitContent mode, register message handler to receive content height
         if voiceboxView.presentationMode == .fitContent {

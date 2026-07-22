@@ -85,22 +85,15 @@ public final class VoiceboxView {
     // MARK: - WebView Factory
 
     /// Creates a configured WKWebView for the Voicebox experience.
+    ///
+    /// Uses the shared configuration (`VoiceboxWebScripts.makeConfiguration`) so a
+    /// freshly-made WebView is wired identically to a warmed/preloaded one — same
+    /// base scripts, event observers, process pool, and data store. The
+    /// presentation-dependent chrome CSS is layered on by `applyWebViewSettings`.
     func makeWebView() -> WKWebView {
-        let config = WKWebViewConfiguration()
-
-        // Media playback
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-
-        // Persistent cache
-        config.websiteDataStore = .default()
-
-        // Disable context menus and text selection via JS
-        config.userContentController.addUserScript(chromeUserScript())
-
+        let config = VoiceboxWebScripts.makeConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         applyWebViewSettings(webView)
-
         return webView
     }
 

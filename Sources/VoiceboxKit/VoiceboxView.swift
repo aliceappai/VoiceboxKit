@@ -129,12 +129,20 @@ public final class VoiceboxView {
     /// just hides the footer and makes the page background transparent.
     private var chromeCSS: String {
         var css = "* { -webkit-user-select: none !important; -webkit-touch-callout: none !important; }"
-        if let dim = floatingCardDim {
-            // Floating card: dim the whole page (rgba black), hide the footer,
-            // let the card be its natural height, and vertically center it.
+        if floatingCardDim != nil {
+            // Floating card: hide the footer, let the card be its natural height,
+            // and vertically center it. Deliberately do NOT set a body/page
+            // background — that would clobber the voicebox's configured background
+            // image. The dim is applied natively behind the WebView instead
+            // (VoiceboxViewController), so a background image shows at full
+            // brightness while a transparent page still gets the dim.
             css += " #recorder-footer { display: none !important; }"
             css += " #recorder-card { height: auto !important; }"
-            css += " html, body { background: rgba(0,0,0,\(dim)) !important; min-height: 100vh !important; margin: 0 !important; }"
+            // Clear only the background COLOR (not background-image): a voicebox
+            // with a configured image still shows it; one without falls back to a
+            // transparent page, revealing the native dim — matching Android.
+            css += " html, body, #main { background-color: transparent !important; }"
+            css += " html, body { min-height: 100vh !important; margin: 0 !important; }"
             css += " #main { min-height: 100vh !important; display: flex !important; flex-direction: column !important; justify-content: center !important; }"
         } else if hidePageChrome {
             css += " #recorder-footer { display: none !important; }"

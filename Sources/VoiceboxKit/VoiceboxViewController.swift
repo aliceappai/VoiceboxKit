@@ -79,10 +79,13 @@ public final class VoiceboxViewController: UIViewController {
         // with the web page's actual background colour.
         // If the caller set an explicit backgroundColor, honour it.
         // Otherwise default to systemBackground — JS detection will override once the page loads.
-        // Floating card: the container MUST be clear so the (transparent) presentation
-        // shows through — the dim around the card is painted by the web page, not here.
+        // Floating card: paint the dim NATIVELY behind the WebView (not via CSS,
+        // which would overwrite the voicebox's configured background image). Where
+        // the page has a background image, the opaque WebView covers this dim
+        // (image shows full-brightness, matching Android); where the page is
+        // transparent, this dim shows through. `dimOpacity: 0` ⇒ fully clear.
         if case .floatingCard = voiceboxView.presentationMode {
-            view.backgroundColor = .clear
+            view.backgroundColor = UIColor.black.withAlphaComponent(floatingCardDim)
         } else {
             view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
         }
@@ -139,12 +142,28 @@ public final class VoiceboxViewController: UIViewController {
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
 
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: view.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
+        if isFloatingCard {
+            // Anchor the full-width panel just below the safe-area top (status bar
+            // stays clear) with rounded TOP corners; it still bleeds off the bottom
+            // edge (square bottom). The dim shows in the top strip + corner curves.
+            webView.layer.cornerRadius = 28
+            webView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            webView.clipsToBounds = true
+            webView.scrollView.clipsToBounds = true
+            NSLayoutConstraint.activate([
+                webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                webView.topAnchor.constraint(equalTo: view.topAnchor),
+                webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+        }
 
         navigationDelegate = VoiceboxNavigationDelegate(handle: voiceboxView.handle)
         navigationDelegate.onLoadingStateChanged = { [weak self] isLoading in
@@ -249,7 +268,9 @@ public final class VoiceboxViewController: UIViewController {
 
         guard isFloatingCard else { return }
         let cardSkeleton = VoiceboxCardSkeletonView()
-        cardSkeleton.dimOpacity = floatingCardDim
+        // Dim is now painted natively on the container view, so the skeleton's own
+        // backdrop stays clear (setting it here would double the dim during load).
+        cardSkeleton.dimOpacity = 0
         cardSkeleton.translatesAutoresizingMaskIntoConstraints = false
         cardSkeleton.isHidden = true
         view.addSubview(cardSkeleton)

@@ -218,6 +218,21 @@ VoiceboxKit.autoGrantMicPermission = true
 .voicebox(isPresented: $show, handle: "feedback", autoGrantMicPermission: true)
 ```
 
+## Precise Location Permission
+
+The recorder's opt-in **"Share precise location"** toggle uses
+`navigator.geolocation` inside the WKWebView. Host apps **must** declare a
+location usage description or WebKit will not show the system location prompt
+(the toggle appears to stall on "Locating…"):
+
+```xml
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>Share precise location with a voice note when you choose to</string>
+```
+
+No additional VoiceboxKit API is required — WebKit requests when-in-use
+authorization when the visitor turns the toggle on.
+
 ## Theming
 
 All `VoiceboxTheme` properties are optional — set only what you want to override. `nil` means "use SDK default".

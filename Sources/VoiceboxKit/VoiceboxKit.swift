@@ -41,6 +41,23 @@ public enum VoiceboxKit {
     /// See ``VoiceboxAppContext`` for the full list of collected fields.
     public static var autoCollectAppContext: Bool = true
 
+    /// When `true`, the SDK bridges the web `navigator.geolocation` API to
+    /// native Core Location, so the recorder's "Share precise location" toggle
+    /// shows only the **single** iOS system location prompt.
+    ///
+    /// Without it, WKWebView adds a **second**, WebKit-managed per-origin
+    /// location prompt on top of the iOS one (and re-prompts on later opens).
+    /// The bridge overrides `navigator.geolocation` and serves it from
+    /// `CLLocationManager`, bypassing WebKit's geolocation layer entirely.
+    ///
+    /// Requires the host app to declare `NSLocationWhenInUseUsageDescription`.
+    /// Default is `false`.
+    ///
+    /// ```swift
+    /// VoiceboxKit.nativeGeolocationEnabled = true
+    /// ```
+    public static var nativeGeolocationEnabled: Bool = false
+
     /// Prefetch and cache the Voicebox page for the given handle.
     ///
     /// Call this once during app launch (or as soon as the destination screen

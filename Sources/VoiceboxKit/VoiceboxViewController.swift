@@ -12,6 +12,7 @@ public final class VoiceboxViewController: UIViewController {
     private let voiceboxView: VoiceboxView
     private var webView: WKWebView!
     private var navigationDelegate: VoiceboxNavigationDelegate!
+    private var geolocationBridge: VoiceboxGeolocationBridge?
     private var closeButton: UIButton?
     private var offlineView: VoiceboxOfflineView?
     private var skeletonView: VoiceboxSkeletonView!
@@ -178,9 +179,19 @@ public final class VoiceboxViewController: UIViewController {
             )
             registeredContentHeightHandler = true
         }
+
+        // Bridge web geolocation to native Core Location so the recorder's
+        // "Share precise location" toggle shows only the single iOS prompt
+        // (no second WebKit per-origin prompt, no re-prompt on later opens).
+        if VoiceboxKit.nativeGeolocationEnabled {
+            let bridge = VoiceboxGeolocationBridge(webView: webView)
+            bridge.install()
+            geolocationBridge = bridge
+        }
     }
 
     deinit {
+        geolocationBridge?.uninstall()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.voiceboxEventMessageName)
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.bgColorMessageName)
         if registeredContentHeightHandler {

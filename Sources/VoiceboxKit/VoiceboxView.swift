@@ -27,10 +27,11 @@ public final class VoiceboxView {
     /// Whether to show the close button. Default is `true`.
     public var showCloseButton: Bool = true
 
-    /// When `true`, injects CSS that hides the recorder page's own footer
-    /// (the "Secure voicebox / Privacy / Terms" row) and makes its body/page
-    /// background transparent, so only the avatar badge + card are visible —
-    /// letting the sheet's own background show through everywhere else.
+    /// When `true`, injects CSS that hides ONLY the recorder page's own footer
+    /// (the "Secure voicebox / Privacy / Terms" row). The page background is left
+    /// intact, so a voicebox's configured background — image or colour — renders
+    /// exactly as on the web and fills the sheet. (A voicebox with no configured
+    /// background shows the page's own default background, not the sheet's.)
     /// Default is `false` (page renders exactly as vbx-web serves it).
     ///
     /// - Note: This is a client-side CSS injection scoped to VoiceboxKit's
@@ -126,7 +127,8 @@ public final class VoiceboxView {
     /// selection/context menus. In `.floatingCard` mode it also hides the footer,
     /// lets the card size to its content, dims the surrounding page, and centers
     /// the card in the viewport; otherwise, when ``hidePageChrome`` is `true`, it
-    /// just hides the footer and makes the page background transparent.
+    /// hides the footer only and leaves the page background untouched (so a
+    /// configured image or colour shows through).
     private var chromeCSS: String {
         var css = "* { -webkit-user-select: none !important; -webkit-touch-callout: none !important; }"
         if floatingCardDim != nil {
@@ -145,8 +147,15 @@ public final class VoiceboxView {
             css += " html, body { min-height: 100vh !important; margin: 0 !important; }"
             css += " #main { min-height: 100vh !important; display: flex !important; flex-direction: column !important; justify-content: center !important; }"
         } else if hidePageChrome {
+            // Hide ONLY the footer; leave the page background untouched so a
+            // voicebox's configured background — image OR colour — renders exactly
+            // as on the web and fills the sheet. We deliberately do NOT clear the
+            // background here: stripping `background-color` erases a configured page
+            // colour (and the `background` shorthand would erase an image too),
+            // leaving the sheet's clear/glass instead of what the voicebox set. A
+            // voicebox with no configured background therefore shows the page's own
+            // default background, not the sheet's.
             css += " #recorder-footer { display: none !important; }"
-            css += " body, html, #main { background: transparent !important; }"
         }
         return css
     }

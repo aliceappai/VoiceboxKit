@@ -218,6 +218,39 @@ VoiceboxKit.autoGrantMicPermission = true
 .voicebox(isPresented: $show, handle: "feedback", autoGrantMicPermission: true)
 ```
 
+## Keeping the Screen Awake
+
+**Recommended for any host that records.** A recording can run to the recorder's
+full length (two minutes), but the iOS auto-lock default is commonly 30s–1min —
+*shorter than the recorder's own limit*. If the device locks mid-take the
+recording is lost: capture runs in the WebView's content process, so the
+microphone is cut off as soon as the app leaves the foreground and the page's
+JavaScript is suspended shortly after. The user returns to a frozen recorder.
+
+```swift
+// Global — set once at app launch
+VoiceboxKit.keepsScreenAwake = true
+```
+
+The SDK then holds `UIApplication.isIdleTimerDisabled` for as long as a Voicebox
+is presented and restores normal auto-lock when it closes. It is ref-counted, so
+overlapping presentations during a transition can't strand the flag on.
+
+Default is `false`: the idle timer is process-global state the **host** owns, so
+upgrading the SDK never changes how a device behaves on its own — same opt-in
+shape as `autoGrantMicPermission` above.
+
+A per-instance override exists as `VoiceboxView.keepsScreenAwake`, but note it is
+only reachable when constructing a `VoiceboxView` directly (e.g.
+`presentAsSheet(from:)`); the `.voicebox(...)` modifier does not currently take it
+as a parameter, so SwiftUI hosts use the global.
+
+**Scope:** only *auto-lock* is prevented. A manual lock, an app switch, or an
+incoming call still interrupt the recording — they take the app out of the
+foreground regardless of the idle timer. This also tracks the Voicebox being
+*presented*, not actively recording: the SDK is told when a recording completes
+but not when one starts.
+
 ## Precise Location Permission
 
 The recorder's opt-in **"Share precise location"** toggle uses

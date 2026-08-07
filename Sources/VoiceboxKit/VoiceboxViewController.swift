@@ -399,13 +399,65 @@ public final class VoiceboxViewController: UIViewController {
     private func measureContentHeight() {
         let js = """
         (function() {
-            var height = Math.max(
-                document.body.scrollHeight,
-                document.body.offsetHeight,
-                document.documentElement.scrollHeight,
-                document.documentElement.offsetHeight
-            );
-            window.webkit.messageHandlers.\(Self.contentHeightMessageName).postMessage(height);
+            // Make the recorder card hug its CONTENT. It's normally `h-100`, stretched
+            // to the fixed-height (100vh) page, so its height tracks the viewport, not
+            // its content — which means it can't reflect content changes AND would feed
+            // back on our own sheet resize. height:auto makes it content-driven so the
+            // live observer below is stable (resizing the sheet doesn't loop back here).
+            if (!document.getElementById('vbx-fitcontent-style')) {
+                var s = document.createElement('style');
+                s.id = 'vbx-fitcontent-style';
+                s.textContent = '#recorder-card{height:auto !important;} body.recorder.show > #main{min-height:0 !important;}';
+                document.head.appendChild(s);
+            }
+            // Measure the rendered BOTTOM of the recorder card (plus the footer when
+            // it's visible) rather than the document — the 100vh page always reports
+            // ~one full screen, which .fitContent could never hug.
+            function bottomOf(el) {
+                // offsetParent === null ⇒ display:none (e.g. a chrome-hidden footer) — skip it.
+                if (!el || el.offsetParent === null) return 0;
+                var scroll = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                return el.getBoundingClientRect().bottom + scroll;
+            }
+            function currentHeight() {
+                var contentBottom = Math.max(
+                    bottomOf(document.getElementById('recorder-card')),
+                    bottomOf(document.getElementById('recorder-footer'))
+                );
+                // Fall back to the document height if the card isn't found (DOM changed).
+                return contentBottom > 0 ? contentBottom : Math.max(
+                    document.body.scrollHeight,
+                    document.body.offsetHeight,
+                    document.documentElement.scrollHeight,
+                    document.documentElement.offsetHeight
+                );
+            }
+            function post() {
+                try {
+                    var mh = window.webkit && window.webkit.messageHandlers
+                        && window.webkit.messageHandlers.\(Self.contentHeightMessageName);
+                    if (!mh) return;
+                    var h = Math.ceil(currentHeight());
+                    if (Math.abs(h - (window.__vbxLastHeight || 0)) < 2) return; // ignore churn
+                    window.__vbxLastHeight = h;
+                    mh.postMessage(h);
+                } catch (e) {}
+            }
+            window.__vbxPostHeight = post; // keep the observer pointed at the latest closure
+            post();
+            setTimeout(post, 350); // re-fit after webfont / logo image settle
+
+            // Live re-fit: follow the card as its content changes (recording UI, async
+            // cards, contact form). Debounced so a burst of mutations animates once.
+            var card = document.getElementById('recorder-card');
+            if (card && !window.__vbxHeightObserver && typeof ResizeObserver !== 'undefined') {
+                var t = null;
+                window.__vbxHeightObserver = new ResizeObserver(function() {
+                    if (t) { clearTimeout(t); }
+                    t = setTimeout(function() { if (window.__vbxPostHeight) window.__vbxPostHeight(); }, 120);
+                });
+                window.__vbxHeightObserver.observe(card);
+            }
         })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)

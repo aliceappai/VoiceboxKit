@@ -35,8 +35,15 @@ final class VoiceboxSkeletonView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Disable CALayer implicit animations so the placeholders appear directly
+        // in place. These are manually-added sublayers, so without this the first
+        // layout animates each frame from its default (top-left, zero size) to the
+        // centered position — the "skeleton slides in from the corner" glitch.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         layoutPlaceholders()
         layoutShimmer()
+        CATransaction.commit()
     }
 
     // MARK: - Setup

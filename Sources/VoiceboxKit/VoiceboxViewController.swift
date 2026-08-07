@@ -15,20 +15,41 @@ public final class VoiceboxViewController: UIViewController {
     private var closeButton: UIButton?
     private var offlineView: VoiceboxOfflineView?
     private var skeletonView: VoiceboxSkeletonView!
+    /// In `.floatingCard` mode the sheet shimmer (full-width bars + mic circle)
+    /// reads as broken — its bars float over the transparent, centered card with
+    /// the real content bleeding through. There we show a card-shaped skeleton
+    /// (avatar badge + card placeholder) instead, matching where the card appears.
+    private var cardSkeletonView: VoiceboxCardSkeletonView?
+    private var isFloatingCard: Bool {
+        if case .floatingCard = voiceboxView.presentationMode { return true }
+        return false
+    }
+    /// The floating card's dim, so the skeleton's backdrop can match it.
+    private var floatingCardDim: CGFloat {
+        if case .floatingCard(let dim) = voiceboxView.presentationMode { return CGFloat(dim) }
+        return 0
+    }
     private var usedPreloadedWebView = false
     private var hasAppeared = false
     private var registeredContentHeightHandler = false
     /// Whether THIS controller currently holds a `VoiceboxScreenAwake` reference, so the
     /// acquire/release pair stays balanced across repeated appear/disappear cycles.
     private var isHoldingScreenAwake = false
-    private static let contentHeightMessageName = "voiceboxContentHeight"
-    private static let voiceboxEventMessageName = "voiceboxEvent"
-    private static let bgColorMessageName = "voiceboxBgColor"
+    // Share the names with the baked-in user scripts (VoiceboxWebScripts) so a
+    // warmed WebView's scripts post to the same handlers this controller registers.
+    private static let contentHeightMessageName = VoiceboxWebScripts.contentHeightMessageName
+    private static let voiceboxEventMessageName = VoiceboxWebScripts.eventMessageName
+    private static let bgColorMessageName = VoiceboxWebScripts.bgColorMessageName
 
     /// Called on the main thread when JS detects the web page's background colour.
     /// The SwiftUI layer uses this to update `presentationBackground` dynamically
     /// so the home-indicator strip matches the page's actual colour.
     var onBackgroundColorDetected: ((UIColor) -> Void)?
+
+    /// Fired once when this controller has finished disappearing (dismissed) —
+    /// used by the SwiftUI `.floatingCard` presenter to sync its `isPresented`
+    /// binding back to `false` when the card dismisses itself (tap-outside).
+    var onDidDismissSelf: (() -> Void)?
 
     /// Creates a view controller for the given VoiceboxView.
     ///
@@ -61,16 +82,33 @@ public final class VoiceboxViewController: UIViewController {
         // with the web page's actual background colour.
         // If the caller set an explicit backgroundColor, honour it.
         // Otherwise default to systemBackground — JS detection will override once the page loads.
-        view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
+        // Floating card: paint the dim NATIVELY behind the WebView (not via CSS,
+        // which would overwrite the voicebox's configured background image). Where
+        // the page has a background image, the opaque WebView covers this dim
+        // (image shows full-brightness, matching Android); where the page is
+        // transparent, this dim shows through. `dimOpacity: 0` ⇒ fully clear.
+        if case .floatingCard = voiceboxView.presentationMode {
+            view.backgroundColor = UIColor.black.withAlphaComponent(floatingCardDim)
+        } else {
+            view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
+        }
         setupWebView()
-        setupCloseButton()
         setupSkeletonView()
+        // Close button last so it sits on top of the WebView and the loading
+        // skeleton — in `.floatingCard` the skeleton covers the whole view, so a
+        // close button added before it would be behind it (and untappable) while
+        // the page loads.
+        setupCloseButton()
         requestMicrophonePermission()
     }
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
+        // Keep the close button above the WebView no matter what — a floating card
+        // over a full-screen background image must never bury its only dismiss
+        // control behind late-added/re-ordered subviews.
+        if let closeButton = closeButton { view.bringSubviewToFront(closeButton) }
         acquireScreenAwakeIfNeeded()
     }
 
@@ -88,6 +126,7 @@ public final class VoiceboxViewController: UIViewController {
         releaseScreenAwakeIfNeeded()
         if hasAppeared {
             voiceboxView.delegate?.voiceboxDidDismiss(voiceboxView)
+            onDidDismissSelf?()
         }
     }
 
@@ -126,6 +165,12 @@ public final class VoiceboxViewController: UIViewController {
             usedPreloadedWebView = true
             // Apply visual settings that makeWebView() would normally set
             voiceboxView.applyWebViewSettings(webView)
+            // The preloaded page is ALREADY loaded, so applyWebViewSettings'
+            // WKUserScript (which only fires on the next navigation) won't run
+            // on it. Inject the chrome CSS directly into the live DOM now, or
+            // the footer/background hiding would only work on fresh loads —
+            // the source of the "sometimes shows chrome, sometimes not" flakiness.
+            voiceboxView.applyChromeCSSNow(to: webView)
         } else {
             webView = voiceboxView.makeWebView()
             usedPreloadedWebView = false
@@ -135,9 +180,19 @@ public final class VoiceboxViewController: UIViewController {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.underPageBackgroundColor = .clear
+        // Floating card: start hidden so a fresh (non-preloaded) load shows only
+        // the card skeleton until the page is ready — `stopLoading()` reveals it.
+        // The preloaded path calls stopLoading() immediately, so no visible delay.
+        webView.alpha = isFloatingCard ? 0 : 1
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
 
+        // The WebView always fills the ENTIRE VC view — edge to edge, under the
+        // status bar and home indicator. For .floatingCard this makes the voicebox's
+        // background image/colour cover the WHOLE screen (no rounded-corner panel and
+        // no safe-area top strip); the card is centered by the page's own CSS, and
+        // the native dim sits behind the background — visible only where the page is
+        // genuinely transparent.
         NSLayoutConstraint.activate([
             webView.topAnchor.constraint(equalTo: view.topAnchor),
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -160,52 +215,13 @@ public final class VoiceboxViewController: UIViewController {
         webView.navigationDelegate = navigationDelegate
         webView.uiDelegate = self
 
-        // Register message handlers
+        // Register message handlers. The scripts that POST to them
+        // (`VoiceboxWebScripts.eventUserScript`) are baked into the shared
+        // configuration for both fresh and warmed WebViews, so — unlike before —
+        // a reused preloaded WebView already has the recorder observers active
+        // and just needs its handler registered here.
         webView.configuration.userContentController.add(self, name: Self.voiceboxEventMessageName)
         webView.configuration.userContentController.add(self, name: Self.bgColorMessageName)
-
-        // Inject JS to observe recorder button clicks and postMessage events
-        let eventScript = WKUserScript(
-            source: """
-            (function() {
-                var handler = window.webkit.messageHandlers.\(Self.voiceboxEventMessageName);
-
-                // Listen for postMessage events (works when embedded in iframe)
-                window.addEventListener('message', function(event) {
-                    if (!event.data || !event.data.type) return;
-                    if (event.data.type === 'voicebox:recordingComplete') handler.postMessage('recordingComplete');
-                    if (event.data.type === 'voicebox:messageSubmitted') handler.postMessage('messageSubmitted');
-                });
-
-                // Observe button clicks (works in direct WKWebView)
-                var observed = { save: false, send: false };
-                function attachListeners() {
-                    // "Save" button — stops recording & uploads
-                    var saveBtn = document.getElementById('record-btn-send');
-                    if (saveBtn && !observed.save) {
-                        observed.save = true;
-                        saveBtn.addEventListener('click', function() {
-                            handler.postMessage('recordingComplete');
-                        });
-                    }
-                    // "Send" button — submits the edit form
-                    var sendBtn = document.querySelector('[data-recorder--recorder-target="editSubmitButton"]');
-                    if (sendBtn && !observed.send) {
-                        observed.send = true;
-                        sendBtn.addEventListener('click', function() {
-                            handler.postMessage('messageSubmitted');
-                        });
-                    }
-                }
-                attachListeners();
-                new MutationObserver(function() { attachListeners(); })
-                    .observe(document.documentElement, { childList: true, subtree: true });
-            })();
-            """,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        webView.configuration.userContentController.addUserScript(eventScript)
 
         // For fitContent mode, register message handler to receive content height
         if voiceboxView.presentationMode == .fitContent {
@@ -233,6 +249,11 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
+    /// Inset from the safe area for the close button. The floating card uses the
+    /// standard 16pt content margin; sheet modes keep their tighter 12pt.
+    private static let closeButtonInset: CGFloat = 12
+    private static let floatingCardCloseButtonInset: CGFloat = 16
+
     private func setupCloseButton() {
         guard voiceboxView.showCloseButton else { return }
 
@@ -252,11 +273,27 @@ public final class VoiceboxViewController: UIViewController {
             .withTintColor(iconColor, renderingMode: .alwaysOriginal)
         button.setImage(iconImage, for: .normal)
 
-        // Background — circular chip or transparent (nil background = transparent)
+        // Background — a solid circular chip when the theme sets a colour, else
+        // transparent (just the glyph). The floating card sets a filled circle
+        // (e.g. white) matching the app's own icon buttons rather than relying on
+        // translucent glass for contrast.
         if let bgColor = theme.closeButtonBackgroundColor {
             button.backgroundColor = bgColor
             button.layer.cornerRadius = buttonSize / 2
-            button.clipsToBounds = true
+            if isFloatingCard {
+                // The card floats over arbitrary voicebox backgrounds, including
+                // LIGHT background images where a plain white circle blends in. A
+                // soft drop shadow keeps it defined on ANY backdrop. clipsToBounds
+                // must stay off or the shadow is clipped; the rounded background
+                // colour still renders as a circle via cornerRadius.
+                button.clipsToBounds = false
+                button.layer.shadowColor = UIColor.black.cgColor
+                button.layer.shadowOpacity = 0.3
+                button.layer.shadowRadius = 5
+                button.layer.shadowOffset = CGSize(width: 0, height: 2)
+            } else {
+                button.clipsToBounds = true
+            }
         } else {
             button.backgroundColor = .clear
         }
@@ -266,9 +303,10 @@ public final class VoiceboxViewController: UIViewController {
         button.accessibilityTraits = .button
 
         view.addSubview(button)
+        let inset = isFloatingCard ? Self.floatingCardCloseButtonInset : Self.closeButtonInset
         NSLayoutConstraint.activate([
-            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: inset),
+            button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -inset),
             button.widthAnchor.constraint(equalToConstant: buttonSize),
             button.heightAnchor.constraint(equalToConstant: buttonSize),
         ])
@@ -277,6 +315,9 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     private func setupSkeletonView() {
+        // Always create the skeleton (keeps the `stopLoading()` calls safe), but
+        // in floating-card mode it stays hidden/unused — a centered spinner is
+        // shown instead (see `startLoading()`).
         skeletonView = VoiceboxSkeletonView()
         skeletonView.translatesAutoresizingMaskIntoConstraints = false
         skeletonView.isHidden = true
@@ -289,6 +330,141 @@ public final class VoiceboxViewController: UIViewController {
             skeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             skeletonView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+
+        guard isFloatingCard else { return }
+        let cardSkeleton = VoiceboxCardSkeletonView()
+        // Dim is now painted natively on the container view, so the skeleton's own
+        // backdrop stays clear (setting it here would double the dim during load).
+        cardSkeleton.dimOpacity = 0
+        cardSkeleton.translatesAutoresizingMaskIntoConstraints = false
+        cardSkeleton.isHidden = true
+        view.addSubview(cardSkeleton)
+        NSLayoutConstraint.activate([
+            cardSkeleton.topAnchor.constraint(equalTo: view.topAnchor),
+            cardSkeleton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cardSkeleton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cardSkeleton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        cardSkeletonView = cardSkeleton
+    }
+
+    /// Routes the loading indicator to the presentation-appropriate skeleton: the
+    /// card-shaped shimmer for `.floatingCard`, the full-width shimmer otherwise.
+    ///
+    /// For the floating card the skeleton's surround is transparent, so the real
+    /// (differently-sized) WebView card would peek out behind it — a doubled-card
+    /// look. Hide the WebView while the skeleton is up and reveal it as the
+    /// skeleton fades, so the transition is skeleton → card, never both at once.
+    private func startLoading() {
+        if isFloatingCard {
+            webView.alpha = 0
+            cardSkeletonView?.startAnimating()
+        } else {
+            skeletonView.startAnimating()
+        }
+    }
+
+    private func stopLoading() {
+        if isFloatingCard {
+            // Set up + start the background reveal while the WebView is still hidden,
+            // then un-hide it in the completion so the first visible frame is the
+            // START of the reveal — no flash of the un-animated background.
+            playFloatingCardEntrance { [weak self] in
+                guard let self else { return }
+                self.webView.alpha = 1
+                self.cardSkeletonView?.stopAnimating()
+            }
+        } else {
+            skeletonView.stopAnimating()
+        }
+    }
+
+    /// Floating card only: the one-shot entrance, honouring `entranceAnimation`.
+    /// With `.backgroundReveal`, the full-screen background scales down slightly and
+    /// fades in; with `.cardLiftIn`, the card assembly (logo + card) lifts up and
+    /// scales into place a beat later. Either can be omitted, or both (`.none`).
+    ///
+    /// The background is painted by the web page, so `.backgroundReveal` lifts it
+    /// onto a fixed layer *behind* the page content and animates that; the card
+    /// (`#main`) is animated separately on top. Respects Reduce Motion. `completion`
+    /// always runs (even with `.none`) so the caller can un-hide the WebView.
+    private func playFloatingCardEntrance(completion: @escaping () -> Void) {
+        let anim = voiceboxView.entranceAnimation
+        let revealBg = anim.contains(.backgroundReveal)
+        let liftCard = anim.contains(.cardLiftIn)
+        guard revealBg || liftCard else {
+            // No entrance animation requested — just un-hide the WebView.
+            completion()
+            return
+        }
+        let js = """
+        (function() {
+            var revealBg = \(revealBg);
+            var liftCard = \(liftCard);
+            var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            var canAnimate = !reduce && typeof document.body.animate === 'function';
+            function real(v) { return v && v !== 'none' && v !== 'rgba(0, 0, 0, 0)' && v !== 'transparent'; }
+
+            if (revealBg) {
+                var host = document.getElementById('main') || document.body;
+                var cs = getComputedStyle(host);
+                var bodyCs = getComputedStyle(document.body);
+                var image = real(cs.backgroundImage) ? cs.backgroundImage : bodyCs.backgroundImage;
+                var color = real(cs.backgroundColor) ? cs.backgroundColor : bodyCs.backgroundColor;
+                if (real(image) || real(color)) {
+                    var layer = document.getElementById('vbx-bg-reveal');
+                    if (!layer) {
+                        layer = document.createElement('div');
+                        layer.id = 'vbx-bg-reveal';
+                        var s = layer.style;
+                        s.position = 'fixed'; s.top = '0'; s.left = '0'; s.right = '0'; s.bottom = '0';
+                        s.zIndex = '-1';                 // behind the card + page content
+                        s.pointerEvents = 'none';        // taps fall through (tap-outside dismiss still works)
+                        s.transformOrigin = 'center';
+                        s.willChange = 'transform, opacity';
+                        s.backgroundImage = image;
+                        s.backgroundColor = color;
+                        // Force a full-screen cover: the image can come from `body` while the
+                        // page's own size/repeat live on a smaller box (`#main` at 340px, or an
+                        // unset default of `auto`+`repeat`), which would TILE the image here.
+                        s.backgroundSize = 'cover';
+                        s.backgroundPosition = 'center';
+                        s.backgroundRepeat = 'no-repeat';
+                        document.body.appendChild(layer);
+                        // Lift the background off the page so it isn't painted twice (a static
+                        // copy at element level would sit on top of the z-index:-1 layer).
+                        host.style.setProperty('background', 'transparent', 'important');
+                        document.body.style.setProperty('background', 'transparent', 'important');
+                    }
+                    if (canAnimate) {
+                        layer.animate(
+                            [ { opacity: 0, transform: 'scale(1.08)' },
+                              { opacity: 1, transform: 'scale(1)' } ],
+                            { duration: 1500, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' }
+                        );
+                    } else {
+                        layer.style.opacity = '1'; layer.style.transform = 'none';
+                    }
+                }
+            }
+
+            if (liftCard && canAnimate) {
+                // A beat after the background, the card assembly (logo + card) lifts
+                // up and scales into place — a layered, premium-feeling entrance.
+                var main = document.getElementById('main');
+                if (main && typeof main.animate === 'function') {
+                    main.animate(
+                        [ { opacity: 0, transform: 'translateY(26px) scale(0.96)' },
+                          { opacity: 1, transform: 'translateY(0) scale(1)' } ],
+                        { duration: 850, delay: 180, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'both' }
+                    );
+                }
+            }
+        })();
+        """
+        webView.evaluateJavaScript(js) { _, _ in
+            DispatchQueue.main.async { completion() }
+        }
     }
 
     // MARK: - Loading
@@ -309,9 +485,14 @@ public final class VoiceboxViewController: UIViewController {
         let cache = VoiceboxCache.shared
 
         if cache.hasCachedContent(for: voiceboxView.handle) {
+            // Floating card hides the WebView until ready, so show the skeleton
+            // even for a cached load or there'd be a blank frame before the
+            // navigation delegate's isLoading callback arrives. (Sheets keep the
+            // old behaviour: their skeleton stays hidden for a fast cached load.)
+            if isFloatingCard { startLoading() }
             webView.load(URLRequest(url: url))
         } else if isNetworkAvailable() {
-            skeletonView.startAnimating()
+            startLoading()
             webView.load(URLRequest(url: url))
         } else {
             showOfflineView()
@@ -320,7 +501,7 @@ public final class VoiceboxViewController: UIViewController {
 
     private func handleLoadingState(_ isLoading: Bool) {
         if isLoading {
-            skeletonView.startAnimating()
+            startLoading()
         } else {
             if voiceboxView.theme.backgroundColor == nil {
                 // Keep the skeleton visible while JS detects the page colour.
@@ -329,10 +510,10 @@ public final class VoiceboxViewController: UIViewController {
                 // Safety net: force-stop after 1 s in case detection never fires (JS error, etc.).
                 detectWebBackgroundColor()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.skeletonView.stopAnimating()
+                    self?.stopLoading()
                 }
             } else {
-                skeletonView.stopAnimating()
+                stopLoading()
             }
             if voiceboxView.presentationMode == .fitContent {
                 measureContentHeight()
@@ -360,7 +541,7 @@ public final class VoiceboxViewController: UIViewController {
         guard let color = UIColor(cssString: cssColor),
               color.cgColor.alpha > 0.01 else {
             // Detection fired but returned transparent/invalid — unblock the skeleton.
-            skeletonView.stopAnimating()
+            stopLoading()
             return
         }
         view.backgroundColor = color
@@ -369,7 +550,7 @@ public final class VoiceboxViewController: UIViewController {
         onBackgroundColorDetected?(color)
         // Stop the skeleton now that the correct colour is in place.
         // The skeleton was kept visible in handleLoadingState to avoid a white-strip flash.
-        skeletonView.stopAnimating()
+        stopLoading()
     }
 
     // MARK: - Content Height (fitContent)
@@ -377,13 +558,65 @@ public final class VoiceboxViewController: UIViewController {
     private func measureContentHeight() {
         let js = """
         (function() {
-            var height = Math.max(
-                document.body.scrollHeight,
-                document.body.offsetHeight,
-                document.documentElement.scrollHeight,
-                document.documentElement.offsetHeight
-            );
-            window.webkit.messageHandlers.\(Self.contentHeightMessageName).postMessage(height);
+            // Make the recorder card hug its CONTENT. It's normally `h-100`, stretched
+            // to the fixed-height (100vh) page, so its height tracks the viewport, not
+            // its content — which means it can't reflect content changes AND would feed
+            // back on our own sheet resize. height:auto makes it content-driven so the
+            // live observer below is stable (resizing the sheet doesn't loop back here).
+            if (!document.getElementById('vbx-fitcontent-style')) {
+                var s = document.createElement('style');
+                s.id = 'vbx-fitcontent-style';
+                s.textContent = '#recorder-card{height:auto !important;} body.recorder.show > #main{min-height:0 !important;}';
+                document.head.appendChild(s);
+            }
+            // Measure the rendered BOTTOM of the recorder card (plus the footer when
+            // it's visible) rather than the document — the 100vh page always reports
+            // ~one full screen, which .fitContent could never hug.
+            function bottomOf(el) {
+                // offsetParent === null ⇒ display:none (e.g. a chrome-hidden footer) — skip it.
+                if (!el || el.offsetParent === null) return 0;
+                var scroll = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                return el.getBoundingClientRect().bottom + scroll;
+            }
+            function currentHeight() {
+                var contentBottom = Math.max(
+                    bottomOf(document.getElementById('recorder-card')),
+                    bottomOf(document.getElementById('recorder-footer'))
+                );
+                // Fall back to the document height if the card isn't found (DOM changed).
+                return contentBottom > 0 ? contentBottom : Math.max(
+                    document.body.scrollHeight,
+                    document.body.offsetHeight,
+                    document.documentElement.scrollHeight,
+                    document.documentElement.offsetHeight
+                );
+            }
+            function post() {
+                try {
+                    var mh = window.webkit && window.webkit.messageHandlers
+                        && window.webkit.messageHandlers.\(Self.contentHeightMessageName);
+                    if (!mh) return;
+                    var h = Math.ceil(currentHeight());
+                    if (Math.abs(h - (window.__vbxLastHeight || 0)) < 2) return; // ignore churn
+                    window.__vbxLastHeight = h;
+                    mh.postMessage(h);
+                } catch (e) {}
+            }
+            window.__vbxPostHeight = post; // keep the observer pointed at the latest closure
+            post();
+            setTimeout(post, 350); // re-fit after webfont / logo image settle
+
+            // Live re-fit: follow the card as its content changes (recording UI, async
+            // cards, contact form). Debounced so a burst of mutations animates once.
+            var card = document.getElementById('recorder-card');
+            if (card && !window.__vbxHeightObserver && typeof ResizeObserver !== 'undefined') {
+                var t = null;
+                window.__vbxHeightObserver = new ResizeObserver(function() {
+                    if (t) { clearTimeout(t); }
+                    t = setTimeout(function() { if (window.__vbxPostHeight) window.__vbxPostHeight(); }, 120);
+                });
+                window.__vbxHeightObserver.observe(card);
+            }
         })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
@@ -411,7 +644,7 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     private func handleLoadError(_ error: Error) {
-        skeletonView.stopAnimating()
+        stopLoading()
         let nsError = error as NSError
 
         voiceboxView.delegate?.voiceboxDidFail(voiceboxView, error: error)
@@ -523,6 +756,10 @@ extension VoiceboxViewController: WKScriptMessageHandler {
                     voiceboxView.delegate?.voiceboxDidFinishRecording(voiceboxView)
                 case "messageSubmitted":
                     voiceboxView.delegate?.voiceboxDidSubmitMessage(voiceboxView)
+                case "dismiss":
+                    // Tap-outside-the-card in `.floatingCard` mode (there's no
+                    // native swipe-down here). Dismiss the presented controller.
+                    dismiss(animated: true)
                 default:
                     break
                 }

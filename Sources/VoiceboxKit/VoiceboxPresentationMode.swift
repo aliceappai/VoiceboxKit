@@ -35,4 +35,20 @@ public enum VoiceboxPresentationMode: Equatable {
     ///
     /// Requires iOS 16+. Falls back to `.sheet` on iOS 15.
     case customFraction(CGFloat)
+
+    /// A floating card centered over the screen on a caller-controlled dim,
+    /// presented over the current context WITHOUT a `UISheetPresentationController`.
+    ///
+    /// Unlike every sheet-based mode above, this has **no system glass/blur
+    /// backdrop** (that material is a `UISheetPresentationController` default with
+    /// no opt-out on iOS 26) — the area around the card is a plain dim you set via
+    /// `dimOpacity` (0 = fully transparent, 1 = black). Best paired with
+    /// `hidePageChrome: true` + `theme.backgroundColor = .clear` for a clean
+    /// "just the card" look. There's no native swipe-down / drag indicator here:
+    /// dismiss is the `×` close button (pinned top-right) when `showCloseButton`
+    /// is true, otherwise a tap outside the card.
+    ///
+    /// - Parameter dimOpacity: Opacity of the black backdrop behind the card.
+    ///   Default `0.35`. Pass `0` for a fully transparent backdrop.
+    case floatingCard(dimOpacity: Double = 0.35)
 }

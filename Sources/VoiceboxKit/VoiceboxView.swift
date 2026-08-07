@@ -27,6 +27,24 @@ public final class VoiceboxView {
     /// Whether to show the close button. Default is `true`.
     public var showCloseButton: Bool = true
 
+    /// When `true`, injects CSS that hides ONLY the recorder page's own footer
+    /// (the "Secure voicebox / Privacy / Terms" row). The page background is left
+    /// intact, so a voicebox's configured background — image or colour — renders
+    /// exactly as on the web and fills the sheet. (A voicebox with no configured
+    /// background shows the page's own default background, not the sheet's.)
+    /// Default is `false` (page renders exactly as vbx-web serves it).
+    ///
+    /// - Note: This is a client-side CSS injection scoped to VoiceboxKit's
+    ///   WebView only — it does not change the page for any other embed
+    ///   (desktop web, Android). It also depends on vbx-web's current DOM
+    ///   structure (`#recorder-footer`, `#main`); if that markup changes,
+    ///   this silently stops matching.
+    public var hidePageChrome: Bool = false
+
+    /// Which entrance animation(s) play when presented in `.floatingCard` mode.
+    /// Default `.all` (background reveal + card lift-in). Ignored by sheet modes.
+    public var entranceAnimation: VoiceboxEntranceAnimation = .all
+
     /// Delegate for receiving lifecycle events (recording complete, dismiss, error).
     public weak var delegate: VoiceboxDelegate?
 
@@ -83,33 +101,15 @@ public final class VoiceboxView {
     // MARK: - WebView Factory
 
     /// Creates a configured WKWebView for the Voicebox experience.
+    ///
+    /// Uses the shared configuration (`VoiceboxWebScripts.makeConfiguration`) so a
+    /// freshly-made WebView is wired identically to a warmed/preloaded one — same
+    /// base scripts, event observers, process pool, and data store. The
+    /// presentation-dependent chrome CSS is layered on by `applyWebViewSettings`.
     func makeWebView() -> WKWebView {
-        let config = WKWebViewConfiguration()
-
-        // Media playback
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-
-        // Persistent cache
-        config.websiteDataStore = .default()
-
-        // Disable context menus and text selection via JS
-        let disableScript = WKUserScript(
-            source: """
-            document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-            document.addEventListener('long-press', function(e) { e.preventDefault(); });
-            var style = document.createElement('style');
-            style.textContent = '* { -webkit-user-select: none !important; -webkit-touch-callout: none !important; }';
-            document.head.appendChild(style);
-            """,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        )
-        config.userContentController.addUserScript(disableScript)
-
+        let config = VoiceboxWebScripts.makeConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         applyWebViewSettings(webView)
-
         return webView
     }
 
@@ -129,18 +129,113 @@ public final class VoiceboxView {
         webView.customUserAgent = "VoiceboxKit/\(VoiceboxKit.version) iOS/\(iosVersion)"
 
         // Inject context menu/text selection disable script if not already present
-        let disableScript = WKUserScript(
-            source: """
+        webView.configuration.userContentController.addUserScript(chromeUserScript())
+    }
+
+    /// Dim opacity for `.floatingCard`, or `nil` for every other presentation mode.
+    private var floatingCardDim: Double? {
+        if case .floatingCard(let dim) = presentationMode { return dim }
+        return nil
+    }
+
+    /// Whether a tap outside the card dismisses it (`.floatingCard` only).
+    ///
+    /// The tap-outside affordance is used **only when there is no close button**:
+    /// once ``showCloseButton`` is on, the `×` button is the single dismiss
+    /// affordance and the surrounding-area tap is intentionally not wired, so the
+    /// two don't overlap. Non-floating-card modes never use tap-outside (they have
+    /// the sheet's own swipe-down), so this is always `false` for them.
+    var usesTapOutsideDismiss: Bool {
+        floatingCardDim != nil && !showCloseButton
+    }
+
+    /// The CSS applied to the recorder page — always disables text
+    /// selection/context menus. In `.floatingCard` mode it also hides the footer,
+    /// lets the card size to its content, dims the surrounding page, and centers
+    /// the card in the viewport; otherwise, when ``hidePageChrome`` is `true`, it
+    /// hides the footer only and leaves the page background untouched (so a
+    /// configured image or colour shows through).
+    private var chromeCSS: String {
+        var css = "* { -webkit-user-select: none !important; -webkit-touch-callout: none !important; }"
+        if floatingCardDim != nil {
+            // Floating card: hide the footer, let the card be its natural height,
+            // and vertically center it. Leave the page background untouched so a
+            // voicebox's configured background — image OR colour — fills the panel
+            // (matching the web), same as the sheet's hidePageChrome path. The dim
+            // is painted natively behind the WebView, so it only shows where the
+            // page is transparent: the top safe-area strip and the rounded top
+            // corners. NOTE: a voicebox with NO background set shows the recorder
+            // page's own default background (a light panel) there, not the dim.
+            css += " #recorder-footer { display: none !important; }"
+            css += " #recorder-card { height: auto !important; }"
+            css += " html, body { min-height: 100vh !important; margin: 0 !important; }"
+            css += " #main { min-height: 100vh !important; display: flex !important; flex-direction: column !important; justify-content: center !important; }"
+        } else if hidePageChrome {
+            // Hide ONLY the footer; leave the page background untouched so a
+            // voicebox's configured background — image OR colour — renders exactly
+            // as on the web and fills the sheet. We deliberately do NOT clear the
+            // background here: stripping `background-color` erases a configured page
+            // colour (and the `background` shorthand would erase an image too),
+            // leaving the sheet's clear/glass instead of what the voicebox set. A
+            // voicebox with no configured background therefore shows the page's own
+            // default background, not the sheet's.
+            css += " #recorder-footer { display: none !important; }"
+        }
+        return css
+    }
+
+    /// JS that injects ``chromeCSS`` into a `<style>` tag under `<head>`. Shared
+    /// by the user-script (future navigations) and the immediate-injection
+    /// (already-loaded page) paths so both apply the exact same styling. When
+    /// ``usesTapOutsideDismiss`` is true (floating card with no close button) it
+    /// also wires a tap-outside-the-card → dismiss bridge (the message name must
+    /// match `VoiceboxViewController.voiceboxEventMessageName`); with a close
+    /// button present the bridge is omitted, so the `×` is the only dismiss.
+    private var chromeInjectionJS: String {
+        var js = """
+        (function() {
             document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
             document.addEventListener('long-press', function(e) { e.preventDefault(); });
-            var style = document.createElement('style');
-            style.textContent = '* { -webkit-user-select: none !important; -webkit-touch-callout: none !important; }';
-            document.head.appendChild(style);
-            """,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        )
-        webView.configuration.userContentController.addUserScript(disableScript)
+            var existing = document.getElementById('voiceboxkit-chrome-style');
+            var style = existing || document.createElement('style');
+            style.id = 'voiceboxkit-chrome-style';
+            style.textContent = '\(chromeCSS)';
+            if (!existing) { document.head.appendChild(style); }
+        """
+        if usesTapOutsideDismiss {
+            js += """
+
+            if (!window.__vbxDismissBound) {
+                window.__vbxDismissBound = true;
+                document.addEventListener('click', function(e) {
+                    var card = document.getElementById('recorder-card');
+                    var logo = document.getElementById('voicebox-logo');
+                    var inCard = card && card.contains(e.target);
+                    var inLogo = logo && logo.contains(e.target);
+                    if (!inCard && !inLogo && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.voiceboxEvent) {
+                        window.webkit.messageHandlers.voiceboxEvent.postMessage('dismiss');
+                    }
+                });
+            }
+        """
+        }
+        js += "\n})();"
+        return js
+    }
+
+    /// Builds the shared page-styling `WKUserScript` for the page's own load.
+    private func chromeUserScript() -> WKUserScript {
+        WKUserScript(source: chromeInjectionJS, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+    }
+
+    /// Immediately applies ``chromeCSS`` to a WebView whose page has ALREADY
+    /// finished loading — the preloaded/warmed case. A `WKUserScript` only runs
+    /// on the *next* navigation, so a reused preloaded WebView (whose page is
+    /// already rendered) would otherwise never get the styling, making the
+    /// chrome-hiding appear to work only intermittently (on fresh loads).
+    /// `evaluateJavaScript` runs against the live DOM right now, closing that gap.
+    func applyChromeCSSNow(to webView: WKWebView) {
+        webView.evaluateJavaScript(chromeInjectionJS, completionHandler: nil)
     }
 
     // MARK: - Presentation
@@ -154,6 +249,12 @@ public final class VoiceboxView {
         switch presentationMode {
         case .fullScreen:
             vc.modalPresentationStyle = .fullScreen
+        case .floatingCard:
+            // Over the current context with a transparent container — the dim and
+            // card layout are painted by the web page itself (see chromeCSS).
+            // No UISheetPresentationController → no system glass/blur backdrop.
+            vc.modalPresentationStyle = .overFullScreen
+            vc.modalTransitionStyle = .crossDissolve
         case .bottomSheet:
             vc.modalPresentationStyle = .pageSheet
             if let sheet = vc.sheetPresentationController {

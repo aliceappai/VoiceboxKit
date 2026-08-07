@@ -79,6 +79,14 @@ final class VoiceboxCardSkeletonView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // Disable CALayer implicit animations so the card/avatar/lines appear
+        // directly in place. These are manually-added sublayers, so without this
+        // the first layout animates each frame from its default (top-left, zero
+        // size) to the centered position — the "skeleton flies in from the corner"
+        // glitch. `defer` commits when layout returns.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         let centerX = bounds.midX
 
         // Card: recorder-ish proportions, clamped to the screen width.

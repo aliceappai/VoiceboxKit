@@ -16,6 +16,8 @@ struct VoiceboxModifier: ViewModifier {
     /// Forwarded to `VoiceboxView.hidePageChrome` — hides the recorder page's
     /// own footer + background via CSS injection. See that property's docs.
     var hidePageChrome: Bool
+    /// Forwarded to `VoiceboxView.entranceAnimation` — floating-card entrance.
+    var entranceAnimation: VoiceboxEntranceAnimation
     var autoGrantMicPermission: Bool?
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
@@ -47,6 +49,7 @@ struct VoiceboxModifier: ViewModifier {
             presentationMode: presentationMode,
             showCloseButton: showCloseButton,
             hidePageChrome: hidePageChrome,
+            entranceAnimation: entranceAnimation,
             autoGrantMicPermission: autoGrantMicPermission,
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
@@ -122,6 +125,7 @@ struct VoiceboxModifier: ViewModifier {
         vbView.presentationMode = presentationMode
         vbView.showCloseButton = showCloseButton
         vbView.hidePageChrome = hidePageChrome
+        vbView.entranceAnimation = entranceAnimation
         vbView.autoGrantMicPermission = autoGrantMicPermission
         vbView.delegate = coordinator
         return (VoiceboxViewController(voiceboxView: vbView), coordinator)
@@ -210,6 +214,7 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
     var presentationMode: VoiceboxPresentationMode
     var showCloseButton: Bool
     var hidePageChrome: Bool
+    var entranceAnimation: VoiceboxEntranceAnimation
     var autoGrantMicPermission: Bool?
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
@@ -234,6 +239,7 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         voiceboxView.presentationMode = presentationMode
         voiceboxView.showCloseButton = showCloseButton
         voiceboxView.hidePageChrome = hidePageChrome
+        voiceboxView.entranceAnimation = entranceAnimation
         voiceboxView.autoGrantMicPermission = autoGrantMicPermission
         voiceboxView.delegate = context.coordinator
         let vc = VoiceboxViewController(voiceboxView: voiceboxView)
@@ -368,6 +374,8 @@ public extension View {
     ///   - hidePageChrome: Hides the recorder page's own footer + background via CSS
     ///     injection, for a "just the card" look. Default is `false`. See
     ///     `VoiceboxView.hidePageChrome` for caveats.
+    ///   - entranceAnimation: Entrance animation(s) for `.floatingCard` mode.
+    ///     Default `.all` (background reveal + card lift-in). Ignored by sheet modes.
     ///   - autoGrantMicPermission: Per-instance mic permission override. `nil` uses global default.
     ///   - onRecordingComplete: Called when the user finishes recording.
     ///   - onMessageSubmitted: Called when the recording is submitted/saved.
@@ -381,6 +389,7 @@ public extension View {
         showCloseButton: Bool = true,
         showDragIndicator: Bool = true,
         hidePageChrome: Bool = false,
+        entranceAnimation: VoiceboxEntranceAnimation = .all,
         autoGrantMicPermission: Bool? = nil,
         onRecordingComplete: (() -> Void)? = nil,
         onMessageSubmitted: (() -> Void)? = nil,
@@ -396,6 +405,7 @@ public extension View {
                 showCloseButton: showCloseButton,
                 showDragIndicator: showDragIndicator,
                 hidePageChrome: hidePageChrome,
+                entranceAnimation: entranceAnimation,
                 autoGrantMicPermission: autoGrantMicPermission,
                 onRecordingComplete: onRecordingComplete,
                 onMessageSubmitted: onMessageSubmitted,

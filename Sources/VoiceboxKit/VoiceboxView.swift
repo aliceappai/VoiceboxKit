@@ -41,6 +41,10 @@ public final class VoiceboxView {
     ///   this silently stops matching.
     public var hidePageChrome: Bool = false
 
+    /// Which entrance animation(s) play when presented in `.floatingCard` mode.
+    /// Default `.all` (background reveal + card lift-in). Ignored by sheet modes.
+    public var entranceAnimation: VoiceboxEntranceAnimation = .all
+
     /// Delegate for receiving lifecycle events (recording complete, dismiss, error).
     public weak var delegate: VoiceboxDelegate?
 

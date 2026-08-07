@@ -294,7 +294,7 @@ public final class VoiceboxViewController: UIViewController {
             // Set up + start the background reveal while the WebView is still hidden,
             // then un-hide it in the completion so the first visible frame is the
             // START of the reveal — no flash of the un-animated background.
-            playFloatingCardBackgroundReveal { [weak self] in
+            playFloatingCardEntrance { [weak self] in
                 guard let self else { return }
                 self.webView.alpha = 1
                 self.cardSkeletonView?.stopAnimating()
@@ -304,57 +304,87 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
-    /// Floating card only: a one-shot "reveal" of the voicebox's full-screen
-    /// background — it scales down slightly and fades in while the card stays put.
+    /// Floating card only: the one-shot entrance, honouring `entranceAnimation`.
+    /// With `.backgroundReveal`, the full-screen background scales down slightly and
+    /// fades in; with `.cardLiftIn`, the card assembly (logo + card) lifts up and
+    /// scales into place a beat later. Either can be omitted, or both (`.none`).
     ///
-    /// The background is painted by the web page, so we lift it onto a fixed layer
-    /// *behind* the page content and animate only that layer — the card (above it
-    /// in the stack) doesn't move. Respects Reduce Motion, and no-ops (still calling
-    /// `completion`) when the page has no background. `completion` runs once the
-    /// layer is in place so the caller can un-hide the WebView flash-free.
-    private func playFloatingCardBackgroundReveal(completion: @escaping () -> Void) {
+    /// The background is painted by the web page, so `.backgroundReveal` lifts it
+    /// onto a fixed layer *behind* the page content and animates that; the card
+    /// (`#main`) is animated separately on top. Respects Reduce Motion. `completion`
+    /// always runs (even with `.none`) so the caller can un-hide the WebView.
+    private func playFloatingCardEntrance(completion: @escaping () -> Void) {
+        let anim = voiceboxView.entranceAnimation
+        let revealBg = anim.contains(.backgroundReveal)
+        let liftCard = anim.contains(.cardLiftIn)
+        guard revealBg || liftCard else {
+            // No entrance animation requested — just un-hide the WebView.
+            completion()
+            return
+        }
         let js = """
         (function() {
-            var host = document.getElementById('main') || document.body;
-            var cs = getComputedStyle(host);
-            var bodyCs = getComputedStyle(document.body);
-            function real(v) { return v && v !== 'none' && v !== 'rgba(0, 0, 0, 0)' && v !== 'transparent'; }
-            var image = real(cs.backgroundImage) ? cs.backgroundImage : bodyCs.backgroundImage;
-            var color = real(cs.backgroundColor) ? cs.backgroundColor : bodyCs.backgroundColor;
-            if (!real(image) && !real(color)) { return; } // nothing to reveal
-
-            var layer = document.getElementById('vbx-bg-reveal');
-            if (!layer) {
-                layer = document.createElement('div');
-                layer.id = 'vbx-bg-reveal';
-                var s = layer.style;
-                s.position = 'fixed'; s.top = '0'; s.left = '0'; s.right = '0'; s.bottom = '0';
-                s.zIndex = '-1';                 // behind the card + page content
-                s.pointerEvents = 'none';        // taps fall through (tap-outside dismiss still works)
-                s.transformOrigin = 'center';
-                s.willChange = 'transform, opacity';
-                s.backgroundImage = image;
-                s.backgroundColor = color;
-                s.backgroundSize = cs.backgroundSize;
-                s.backgroundPosition = cs.backgroundPosition;
-                s.backgroundRepeat = cs.backgroundRepeat;
-                document.body.appendChild(layer);
-                // Lift the background off the page so it isn't painted twice (a static
-                // copy at element level would sit on top of the z-index:-1 layer).
-                host.style.setProperty('background', 'transparent', 'important');
-                document.body.style.setProperty('background', 'transparent', 'important');
-            }
-
+            var revealBg = \(revealBg);
+            var liftCard = \(liftCard);
             var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            if (reduce || typeof layer.animate !== 'function') {
-                layer.style.opacity = '1'; layer.style.transform = 'none';
-                return;
+            var canAnimate = !reduce && typeof document.body.animate === 'function';
+            function real(v) { return v && v !== 'none' && v !== 'rgba(0, 0, 0, 0)' && v !== 'transparent'; }
+
+            if (revealBg) {
+                var host = document.getElementById('main') || document.body;
+                var cs = getComputedStyle(host);
+                var bodyCs = getComputedStyle(document.body);
+                var image = real(cs.backgroundImage) ? cs.backgroundImage : bodyCs.backgroundImage;
+                var color = real(cs.backgroundColor) ? cs.backgroundColor : bodyCs.backgroundColor;
+                if (real(image) || real(color)) {
+                    var layer = document.getElementById('vbx-bg-reveal');
+                    if (!layer) {
+                        layer = document.createElement('div');
+                        layer.id = 'vbx-bg-reveal';
+                        var s = layer.style;
+                        s.position = 'fixed'; s.top = '0'; s.left = '0'; s.right = '0'; s.bottom = '0';
+                        s.zIndex = '-1';                 // behind the card + page content
+                        s.pointerEvents = 'none';        // taps fall through (tap-outside dismiss still works)
+                        s.transformOrigin = 'center';
+                        s.willChange = 'transform, opacity';
+                        s.backgroundImage = image;
+                        s.backgroundColor = color;
+                        // Force a full-screen cover: the image can come from `body` while the
+                        // page's own size/repeat live on a smaller box (`#main` at 340px, or an
+                        // unset default of `auto`+`repeat`), which would TILE the image here.
+                        s.backgroundSize = 'cover';
+                        s.backgroundPosition = 'center';
+                        s.backgroundRepeat = 'no-repeat';
+                        document.body.appendChild(layer);
+                        // Lift the background off the page so it isn't painted twice (a static
+                        // copy at element level would sit on top of the z-index:-1 layer).
+                        host.style.setProperty('background', 'transparent', 'important');
+                        document.body.style.setProperty('background', 'transparent', 'important');
+                    }
+                    if (canAnimate) {
+                        layer.animate(
+                            [ { opacity: 0, transform: 'scale(1.08)' },
+                              { opacity: 1, transform: 'scale(1)' } ],
+                            { duration: 1500, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' }
+                        );
+                    } else {
+                        layer.style.opacity = '1'; layer.style.transform = 'none';
+                    }
+                }
             }
-            layer.animate(
-                [ { opacity: 0, transform: 'scale(1.08)' },
-                  { opacity: 1, transform: 'scale(1)' } ],
-                { duration: 1500, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' }
-            );
+
+            if (liftCard && canAnimate) {
+                // A beat after the background, the card assembly (logo + card) lifts
+                // up and scales into place — a layered, premium-feeling entrance.
+                var main = document.getElementById('main');
+                if (main && typeof main.animate === 'function') {
+                    main.animate(
+                        [ { opacity: 0, transform: 'translateY(26px) scale(0.96)' },
+                          { opacity: 1, transform: 'translateY(0) scale(1)' } ],
+                        { duration: 850, delay: 180, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'both' }
+                    );
+                }
+            }
         })();
         """
         webView.evaluateJavaScript(js) { _, _ in

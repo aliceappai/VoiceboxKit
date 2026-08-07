@@ -4,7 +4,7 @@ import Foundation
 public enum VoiceboxKit {
 
     /// SDK version string.
-    public static let version = "1.0.6"
+    public static let version = "1.1.0"
 
     /// Base URL for Voicebox handles. Defaults to production (`https://vbx.to`).
     public static var baseURL: String = "https://vbx.to"

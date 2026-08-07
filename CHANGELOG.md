@@ -5,6 +5,34 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0]
+
+### Added
+
+- `.floatingCard(dimOpacity:)` presentation mode — presents the recorder as a
+  glass-free floating card centered over a caller-controlled dim, with **no**
+  `UISheetPresentationController` (and therefore no iOS 26 system glass/blur).
+  The voicebox's own background — colour or full-screen image — renders behind
+  the card. Dismiss is a top-right close button when `showCloseButton` is `true`,
+  otherwise a tap outside the card.
+- `VoiceboxEntranceAnimation` — configurable floating-card entrance (background
+  reveal + card lift-in, combinable via `OptionSet`; respects Reduce Motion).
+- Recorder close button for the floating card: a solid circular chip (theme-driven
+  via `closeButtonBackgroundColor` / `closeButtonIconColor` / `closeButtonSize`)
+  with a soft drop shadow so it stays legible over any background — a plain light
+  card or a full-screen image. When shown it becomes the single dismiss affordance
+  and the tap-outside bridge is dropped.
+- `hidePageChrome` renders the voicebox's configured background (image or colour)
+  while hiding only the recorder page's footer.
+
+### Changed
+
+- Unified the live and preloaded WebView configuration so a warmed WebView is
+  wired identically to a fresh one — more robust, faster loading.
+- Added a card-shaped loading skeleton for the floating card (the full-width sheet
+  shimmer read as broken over a transparent, centered card).
+- `.fitContent` now hugs the recorder card and re-fits live as its content changes.
+
 ## [1.0.6]
 
 ### Added

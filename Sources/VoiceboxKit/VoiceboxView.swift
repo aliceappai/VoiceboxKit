@@ -127,6 +127,17 @@ public final class VoiceboxView {
         return nil
     }
 
+    /// Whether a tap outside the card dismisses it (`.floatingCard` only).
+    ///
+    /// The tap-outside affordance is used **only when there is no close button**:
+    /// once ``showCloseButton`` is on, the `×` button is the single dismiss
+    /// affordance and the surrounding-area tap is intentionally not wired, so the
+    /// two don't overlap. Non-floating-card modes never use tap-outside (they have
+    /// the sheet's own swipe-down), so this is always `false` for them.
+    var usesTapOutsideDismiss: Bool {
+        floatingCardDim != nil && !showCloseButton
+    }
+
     /// The CSS applied to the recorder page — always disables text
     /// selection/context menus. In `.floatingCard` mode it also hides the footer,
     /// lets the card size to its content, dims the surrounding page, and centers
@@ -164,9 +175,11 @@ public final class VoiceboxView {
 
     /// JS that injects ``chromeCSS`` into a `<style>` tag under `<head>`. Shared
     /// by the user-script (future navigations) and the immediate-injection
-    /// (already-loaded page) paths so both apply the exact same styling. In
-    /// `.floatingCard` mode it also wires a tap-outside-the-card → dismiss bridge
-    /// (the message name must match `VoiceboxViewController.voiceboxEventMessageName`).
+    /// (already-loaded page) paths so both apply the exact same styling. When
+    /// ``usesTapOutsideDismiss`` is true (floating card with no close button) it
+    /// also wires a tap-outside-the-card → dismiss bridge (the message name must
+    /// match `VoiceboxViewController.voiceboxEventMessageName`); with a close
+    /// button present the bridge is omitted, so the `×` is the only dismiss.
     private var chromeInjectionJS: String {
         var js = """
         (function() {
@@ -178,7 +191,7 @@ public final class VoiceboxView {
             style.textContent = '\(chromeCSS)';
             if (!existing) { document.head.appendChild(style); }
         """
-        if floatingCardDim != nil {
+        if usesTapOutsideDismiss {
             js += """
 
             if (!window.__vbxDismissBound) {

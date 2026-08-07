@@ -93,6 +93,39 @@ final class VoiceboxViewTests: XCTestCase {
         XCTAssertFalse(vb.effectiveAutoGrantMicPermission)
     }
 
+    // MARK: - Tap-Outside Dismiss (floating card)
+
+    // A plain floating card (no close button) keeps the tap-outside-to-dismiss
+    // affordance — there's no other way out of it.
+    func testFloatingCardWithoutCloseButtonUsesTapOutsideDismiss() {
+        let vb = VoiceboxView(handle: "test")
+        vb.presentationMode = .floatingCard(dimOpacity: 0.15)
+        vb.showCloseButton = false
+        XCTAssertTrue(vb.usesTapOutsideDismiss)
+    }
+
+    // Once the close button is shown, it becomes the single dismiss affordance and
+    // tap-outside is intentionally not wired (they must not overlap).
+    func testFloatingCardWithCloseButtonDropsTapOutsideDismiss() {
+        let vb = VoiceboxView(handle: "test")
+        vb.presentationMode = .floatingCard(dimOpacity: 0.15)
+        vb.showCloseButton = true
+        XCTAssertFalse(vb.usesTapOutsideDismiss)
+    }
+
+    // Sheet-based modes have their own swipe-down, so tap-outside never applies —
+    // regardless of the close button.
+    func testNonFloatingCardModesNeverUseTapOutsideDismiss() {
+        let vb = VoiceboxView(handle: "test")
+        for mode: VoiceboxPresentationMode in [.bottomSheet, .sheet, .fitContent, .fullScreen] {
+            vb.presentationMode = mode
+            vb.showCloseButton = false
+            XCTAssertFalse(vb.usesTapOutsideDismiss, "\(mode) should not use tap-outside")
+            vb.showCloseButton = true
+            XCTAssertFalse(vb.usesTapOutsideDismiss, "\(mode) should not use tap-outside")
+        }
+    }
+
     // MARK: - Handle Stored Correctly
 
     func testHandleStoredAsProvided() {

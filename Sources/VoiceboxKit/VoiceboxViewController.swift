@@ -90,14 +90,22 @@ public final class VoiceboxViewController: UIViewController {
             view.backgroundColor = voiceboxView.theme.backgroundColor ?? .systemBackground
         }
         setupWebView()
-        setupCloseButton()
         setupSkeletonView()
+        // Close button last so it sits on top of the WebView and the loading
+        // skeleton — in `.floatingCard` the skeleton covers the whole view, so a
+        // close button added before it would be behind it (and untappable) while
+        // the page loads.
+        setupCloseButton()
         requestMicrophonePermission()
     }
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
+        // Keep the close button above the WebView no matter what — a floating card
+        // over a full-screen background image must never bury its only dismiss
+        // control behind late-added/re-ordered subviews.
+        if let closeButton = closeButton { view.bringSubviewToFront(closeButton) }
     }
 
     public override func viewDidDisappear(_ animated: Bool) {
@@ -196,6 +204,11 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
+    /// Inset from the safe area for the close button. The floating card uses the
+    /// standard 16pt content margin; sheet modes keep their tighter 12pt.
+    private static let closeButtonInset: CGFloat = 12
+    private static let floatingCardCloseButtonInset: CGFloat = 16
+
     private func setupCloseButton() {
         guard voiceboxView.showCloseButton else { return }
 
@@ -215,11 +228,27 @@ public final class VoiceboxViewController: UIViewController {
             .withTintColor(iconColor, renderingMode: .alwaysOriginal)
         button.setImage(iconImage, for: .normal)
 
-        // Background — circular chip or transparent (nil background = transparent)
+        // Background — a solid circular chip when the theme sets a colour, else
+        // transparent (just the glyph). The floating card sets a filled circle
+        // (e.g. white) matching the app's own icon buttons rather than relying on
+        // translucent glass for contrast.
         if let bgColor = theme.closeButtonBackgroundColor {
             button.backgroundColor = bgColor
             button.layer.cornerRadius = buttonSize / 2
-            button.clipsToBounds = true
+            if isFloatingCard {
+                // The card floats over arbitrary voicebox backgrounds, including
+                // LIGHT background images where a plain white circle blends in. A
+                // soft drop shadow keeps it defined on ANY backdrop. clipsToBounds
+                // must stay off or the shadow is clipped; the rounded background
+                // colour still renders as a circle via cornerRadius.
+                button.clipsToBounds = false
+                button.layer.shadowColor = UIColor.black.cgColor
+                button.layer.shadowOpacity = 0.3
+                button.layer.shadowRadius = 5
+                button.layer.shadowOffset = CGSize(width: 0, height: 2)
+            } else {
+                button.clipsToBounds = true
+            }
         } else {
             button.backgroundColor = .clear
         }
@@ -229,9 +258,10 @@ public final class VoiceboxViewController: UIViewController {
         button.accessibilityTraits = .button
 
         view.addSubview(button)
+        let inset = isFloatingCard ? Self.floatingCardCloseButtonInset : Self.closeButtonInset
         NSLayoutConstraint.activate([
-            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: inset),
+            button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -inset),
             button.widthAnchor.constraint(equalToConstant: buttonSize),
             button.heightAnchor.constraint(equalToConstant: buttonSize),
         ])

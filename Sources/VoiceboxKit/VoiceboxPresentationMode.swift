@@ -44,8 +44,9 @@ public enum VoiceboxPresentationMode: Equatable {
     /// no opt-out on iOS 26) — the area around the card is a plain dim you set via
     /// `dimOpacity` (0 = fully transparent, 1 = black). Best paired with
     /// `hidePageChrome: true` + `theme.backgroundColor = .clear` for a clean
-    /// "just the card" look. Dismiss is by tapping outside the card (there's no
-    /// native swipe-down / drag indicator here).
+    /// "just the card" look. There's no native swipe-down / drag indicator here:
+    /// dismiss is the `×` close button (pinned top-right) when `showCloseButton`
+    /// is true, otherwise a tap outside the card.
     ///
     /// - Parameter dimOpacity: Opacity of the black backdrop behind the card.
     ///   Default `0.35`. Pass `0` for a fully transparent backdrop.

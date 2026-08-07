@@ -5,6 +5,35 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6]
+
+### Added
+
+- `VoiceboxKit.keepsScreenAwake` (default `false`) keeps the screen awake while a
+  Voicebox is presented, restoring normal auto-lock when it closes. A recording can
+  run for two minutes but iOS auto-lock is commonly 30s–1min, so a long take could
+  be cut off by the device locking — and the recording does not survive it, because
+  capture stops as soon as the app leaves the foreground. Hosts that record should
+  set this to `true` at launch.
+
+  Opt-in rather than on by default: `isIdleTimerDisabled` is process-global state
+  the host owns, so upgrading the SDK must not change device behaviour on its own
+  (same shape as `autoGrantMicPermission`). Overridable per instance via
+  `VoiceboxView.keepsScreenAwake`.
+
+  Note this prevents *auto-lock* only — a manual lock, app switch, or incoming call
+  still interrupt a recording. It also tracks the Voicebox being presented rather
+  than actively recording, since the SDK is not told when recording starts.
+
+## [1.0.5]
+
+### Fixed
+
+- Documented that host apps must declare `NSLocationWhenInUseUsageDescription`
+  for the recorder's opt-in "Share precise location" toggle
+  (`navigator.geolocation` in WKWebView). Without that key, WebKit never shows
+  the system location prompt and the toggle stalls on "Locating…".
+
 ## [1.0.4]
 
 ### Fixed

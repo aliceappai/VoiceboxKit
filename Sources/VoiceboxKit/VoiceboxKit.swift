@@ -4,7 +4,7 @@ import Foundation
 public enum VoiceboxKit {
 
     /// SDK version string.
-    public static let version = "1.0.4"
+    public static let version = "1.0.6"
 
     /// Base URL for Voicebox handles. Defaults to production (`https://vbx.to`).
     public static var baseURL: String = "https://vbx.to"
@@ -40,6 +40,35 @@ public enum VoiceboxKit {
     ///
     /// See ``VoiceboxAppContext`` for the full list of collected fields.
     public static var autoCollectAppContext: Bool = true
+
+    /// When `true`, the SDK keeps the screen awake while a Voicebox is on screen,
+    /// restoring normal auto-lock as soon as it closes. Default is `false`.
+    ///
+    /// **Recommended for any host that records.** A recording can run to the recorder's
+    /// full length (two minutes), but the iOS auto-lock default is commonly 30s–1min —
+    /// shorter than the recorder's own limit. If the device locks mid-take the recording
+    /// is lost: the microphone is cut off as soon as the app leaves the foreground, and
+    /// the recorder freezes with no way to send.
+    ///
+    /// Opt-in rather than on by default because `isIdleTimerDisabled` is process-global
+    /// state the **host** owns — upgrading the SDK should not silently change how a
+    /// device behaves. Same reasoning as ``autoGrantMicPermission``.
+    ///
+    /// Set this once at app launch:
+    /// ```swift
+    /// VoiceboxKit.keepsScreenAwake = true
+    /// ```
+    ///
+    /// Individual `VoiceboxView` instances can override this value.
+    ///
+    /// - Note: This tracks the Voicebox being **presented**, not actively recording —
+    ///   the SDK is not told when recording starts, only when it completes. A Voicebox
+    ///   left open while the user reads the prompt also holds the screen awake.
+    ///
+    /// - Note: Only *auto-lock* is prevented. A manual lock, an app switch, or an
+    ///   incoming call still interrupt the recording, because they take the app out of
+    ///   the foreground regardless of the idle timer.
+    public static var keepsScreenAwake: Bool = false
 
     /// Prefetch and cache the Voicebox page for the given handle.
     ///

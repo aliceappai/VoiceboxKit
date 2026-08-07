@@ -59,6 +59,17 @@ public final class VoiceboxView {
         autoGrantMicPermission ?? VoiceboxKit.autoGrantMicPermission
     }
 
+    /// Per-instance override for keeping the screen awake while this Voicebox is shown.
+    /// - `nil` — uses the global `VoiceboxKit.keepsScreenAwake` value.
+    /// - `true` — hold the idle timer open while this Voicebox is on screen.
+    /// - `false` — leave auto-lock alone (the recording is lost if the device locks).
+    public var keepsScreenAwake: Bool?
+
+    /// Resolved screen-awake setting (instance override > global default).
+    var effectiveKeepsScreenAwake: Bool {
+        keepsScreenAwake ?? VoiceboxKit.keepsScreenAwake
+    }
+
     // MARK: - Init
 
     /// Creates a VoiceboxView for the given handle.

@@ -32,6 +32,9 @@ public final class VoiceboxViewController: UIViewController {
     private var usedPreloadedWebView = false
     private var hasAppeared = false
     private var registeredContentHeightHandler = false
+    /// Whether THIS controller currently holds a `VoiceboxScreenAwake` reference, so the
+    /// acquire/release pair stays balanced across repeated appear/disappear cycles.
+    private var isHoldingScreenAwake = false
     // Share the names with the baked-in user scripts (VoiceboxWebScripts) so a
     // warmed WebView's scripts post to the same handlers this controller registers.
     private static let contentHeightMessageName = VoiceboxWebScripts.contentHeightMessageName
@@ -106,14 +109,48 @@ public final class VoiceboxViewController: UIViewController {
         // over a full-screen background image must never bury its only dismiss
         // control behind late-added/re-ordered subviews.
         if let closeButton = closeButton { view.bringSubviewToFront(closeButton) }
+        acquireScreenAwakeIfNeeded()
+    }
+
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // Released here as well as in viewDidDisappear: this fires BEFORE the dismiss
+        // animation, and is more dependable than viewDidDisappear when a
+        // UIViewControllerRepresentable is torn down inside a SwiftUI .sheet. Guarded, so
+        // whichever runs first wins and the rest are no-ops.
+        releaseScreenAwakeIfNeeded()
     }
 
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        releaseScreenAwakeIfNeeded()
         if hasAppeared {
             voiceboxView.delegate?.voiceboxDidDismiss(voiceboxView)
             onDidDismissSelf?()
         }
+    }
+
+    // MARK: - Screen awake
+
+    // Auto-lock on iOS is commonly shorter than the recorder's own two-minute limit, so a
+    // long recording can be cut off by the device locking. See VoiceboxScreenAwake for
+    // why this is the SDK's job and why it is ref-counted.
+    //
+    // Paired against the view lifecycle rather than the WebView's state: viewDidAppear /
+    // viewDidDisappear are guaranteed to balance, and `isHoldingScreenAwake` makes a
+    // repeated appear (e.g. returning from a nested presentation) a no-op rather than a
+    // second, unmatched acquire.
+
+    private func acquireScreenAwakeIfNeeded() {
+        guard voiceboxView.effectiveKeepsScreenAwake, !isHoldingScreenAwake else { return }
+        isHoldingScreenAwake = true
+        VoiceboxScreenAwake.shared.acquire()
+    }
+
+    private func releaseScreenAwakeIfNeeded() {
+        guard isHoldingScreenAwake else { return }
+        isHoldingScreenAwake = false
+        VoiceboxScreenAwake.shared.release()
     }
 
     // MARK: - Setup
@@ -197,6 +234,14 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     deinit {
+        // Safety net: if this controller is torn down without viewDidDisappear (never
+        // presented, or dropped mid-transition) the held reference would otherwise leak
+        // and the device would stop auto-locking for the rest of the session. Guarded, so
+        // the normal path — released in viewDidDisappear — is a no-op here.
+        if isHoldingScreenAwake {
+            isHoldingScreenAwake = false
+            VoiceboxScreenAwake.shared.release()
+        }
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.voiceboxEventMessageName)
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.bgColorMessageName)
         if registeredContentHeightHandler {

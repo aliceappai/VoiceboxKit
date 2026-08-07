@@ -142,28 +142,18 @@ public final class VoiceboxViewController: UIViewController {
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
 
-        if isFloatingCard {
-            // Anchor the full-width panel just below the safe-area top (status bar
-            // stays clear) with rounded TOP corners; it still bleeds off the bottom
-            // edge (square bottom). The dim shows in the top strip + corner curves.
-            webView.layer.cornerRadius = 28
-            webView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-            webView.clipsToBounds = true
-            webView.scrollView.clipsToBounds = true
-            NSLayoutConstraint.activate([
-                webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                webView.topAnchor.constraint(equalTo: view.topAnchor),
-                webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            ])
-        }
+        // The WebView always fills the ENTIRE VC view — edge to edge, under the
+        // status bar and home indicator. For .floatingCard this makes the voicebox's
+        // background image/colour cover the WHOLE screen (no rounded-corner panel and
+        // no safe-area top strip); the card is centered by the page's own CSS, and
+        // the native dim sits behind the background — visible only where the page is
+        // genuinely transparent.
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: view.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
 
         navigationDelegate = VoiceboxNavigationDelegate(handle: voiceboxView.handle)
         navigationDelegate.onLoadingStateChanged = { [weak self] isLoading in

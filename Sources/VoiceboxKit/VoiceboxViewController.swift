@@ -13,6 +13,13 @@ public final class VoiceboxViewController: UIViewController {
     private var webView: WKWebView!
     private var navigationDelegate: VoiceboxNavigationDelegate!
     private var closeButton: UIButton?
+    /// Floating-card only: the transparent nav bar that hosts the close × as a real
+    /// bar-button item, so the SYSTEM positions it at the app's standard trailing
+    /// slot (see `installCloseButtonInNavBar`).
+    private var closeNavBar: UINavigationBar?
+    /// The WebView's bottom constraint, held so floating-card keyboard avoidance
+    /// can shrink the card's viewport from the bottom (see `keyboardWillChangeFrame`).
+    private var webViewBottomConstraint: NSLayoutConstraint?
     private var offlineView: VoiceboxOfflineView?
     private var skeletonView: VoiceboxSkeletonView!
     /// In `.floatingCard` mode the sheet shimmer (full-width bars + mic circle)
@@ -105,10 +112,10 @@ public final class VoiceboxViewController: UIViewController {
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
-        // Keep the close button above the WebView no matter what — a floating card
+        // Keep the close control above the WebView no matter what — a floating card
         // over a full-screen background image must never bury its only dismiss
         // control behind late-added/re-ordered subviews.
-        if let closeButton = closeButton { view.bringSubviewToFront(closeButton) }
+        bringCloseControlToFront()
         acquireScreenAwakeIfNeeded()
     }
 
@@ -193,12 +200,28 @@ public final class VoiceboxViewController: UIViewController {
         // no safe-area top strip); the card is centered by the page's own CSS, and
         // the native dim sits behind the background — visible only where the page is
         // genuinely transparent.
+        let bottom = webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        webViewBottomConstraint = bottom
         NSLayoutConstraint.activate([
             webView.topAnchor.constraint(equalTo: view.topAnchor),
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottom,
         ])
+
+        // Floating card only: own the keyboard avoidance ourselves. The recorder
+        // page is a full-screen `100vh` layout with the card flex-centred; when a
+        // field focuses, WKWebView's default behaviour scrolls the whole page up to
+        // reveal the field, exposing the background above and the page chrome behind
+        // the card (issue #246). Instead we (a) stop the scroll view adjusting its
+        // own insets, and (b) shrink the WebView by the keyboard's height so `100vh`
+        // recomputes and the card simply re-centres in the space above the keyboard —
+        // the recorder background fills the rest, nothing scrolls into view. Scoped
+        // to `.floatingCard` so sheet modes (with their own detent sizing) are untouched.
+        if isFloatingCard {
+            webView.scrollView.contentInsetAdjustmentBehavior = .never
+            registerKeyboardObservers()
+        }
 
         navigationDelegate = VoiceboxNavigationDelegate(handle: voiceboxView.handle)
         navigationDelegate.onLoadingStateChanged = { [weak self] isLoading in
@@ -234,6 +257,8 @@ public final class VoiceboxViewController: UIViewController {
     }
 
     deinit {
+        // Floating-card keyboard observers (no-op if never registered).
+        NotificationCenter.default.removeObserver(self)
         // Safety net: if this controller is torn down without viewDidDisappear (never
         // presented, or dropped mid-transition) the held reference would otherwise leak
         // and the device would stop auto-locking for the rest of the session. Guarded, so
@@ -249,10 +274,11 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
-    /// Inset from the safe area for the close button. The floating card uses the
-    /// standard 16pt content margin; sheet modes keep their tighter 12pt.
+    /// Trailing inset from the safe area for the close button in SHEET modes only.
+    /// The floating card positions its × via a nav-bar item instead (see
+    /// `installCloseButtonInNavBar`), so it lands at the host app's own standard
+    /// bar-button slot with no hardcoded inset to keep in sync (issue #246).
     private static let closeButtonInset: CGFloat = 12
-    private static let floatingCardCloseButtonInset: CGFloat = 16
 
     private func setupCloseButton() {
         guard voiceboxView.showCloseButton else { return }
@@ -302,16 +328,75 @@ public final class VoiceboxViewController: UIViewController {
         button.accessibilityLabel = "Close"
         button.accessibilityTraits = .button
 
-        view.addSubview(button)
-        let inset = isFloatingCard ? Self.floatingCardCloseButtonInset : Self.closeButtonInset
+        // The button owns its size in every mode — a bar-button customView needs an
+        // explicit size to lay out.
         NSLayoutConstraint.activate([
-            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: inset),
-            button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -inset),
             button.widthAnchor.constraint(equalToConstant: buttonSize),
             button.heightAnchor.constraint(equalToConstant: buttonSize),
         ])
-
         self.closeButton = button
+
+        if isFloatingCard {
+            // Let the system place it at the app's standard bar-button slot.
+            installCloseButtonInNavBar(button)
+        } else {
+            // Sheet modes: pin to the top-trailing safe area (the sheet's own chrome
+            // owns the top, so a nav bar would be redundant here).
+            button.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: Self.closeButtonInset),
+                button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -Self.closeButtonInset),
+            ])
+        }
+    }
+
+    /// Floating card: host the × as a real nav-bar item so the SYSTEM positions it
+    /// at the same standard trailing slot the app's own nav-bar buttons use — the
+    /// create-voicebox header ×, the Directory owner mark, etc. This lines the ×
+    /// up with the app's chrome automatically, across devices and orientations, with
+    /// no hardcoded inset to keep in sync (issue #246). The bar is fully transparent,
+    /// so the recorder's full-bleed background shows straight through it — only the ×
+    /// is drawn.
+    private func installCloseButtonInNavBar(_ button: UIButton) {
+        let navBar = UINavigationBar()
+        navBar.translatesAutoresizingMaskIntoConstraints = false
+        let transparent = UINavigationBarAppearance()
+        transparent.configureWithTransparentBackground()
+        navBar.standardAppearance = transparent
+        navBar.scrollEdgeAppearance = transparent
+        navBar.compactAppearance = transparent
+        // A transparent bar over a full-bleed background has no content of its own to
+        // hit-test; only the × item is interactive.
+        let closeItem = UIBarButtonItem(customView: button)
+        // iOS 26 wraps bar-button items in a shared Liquid Glass background; our ×
+        // already carries its own solid white disc, so suppress the system glass or
+        // it paints a faint (sometimes colour-tinted) rounded-rect halo behind the
+        // disc — visible in issue #246 verification over the Directory / a detail.
+        if #available(iOS 26.0, *) {
+            closeItem.hidesSharedBackground = true
+        }
+        let navItem = UINavigationItem()
+        navItem.rightBarButtonItem = closeItem
+        navBar.setItems([navItem], animated: false)
+
+        view.addSubview(navBar)
+        NSLayoutConstraint.activate([
+            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        self.closeNavBar = navBar
+    }
+
+    /// Brings whichever dismiss control this mode uses to the front — the nav bar for
+    /// the floating card, the bare button for sheet modes.
+    private func bringCloseControlToFront() {
+        if let navBar = closeNavBar {
+            view.bringSubviewToFront(navBar)
+        } else if let button = closeButton {
+            view.bringSubviewToFront(button)
+        }
     }
 
     private func setupSkeletonView() {
@@ -465,6 +550,55 @@ public final class VoiceboxViewController: UIViewController {
         webView.evaluateJavaScript(js) { _, _ in
             DispatchQueue.main.async { completion() }
         }
+    }
+
+    // MARK: - Keyboard avoidance (floating card)
+
+    private func registerKeyboardObservers() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillChangeFrame(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification, object: nil
+        )
+    }
+
+    @objc private func keyboardWillChangeFrame(_ note: Notification) {
+        guard let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        else { return }
+        // How much of THIS view the keyboard covers, in local coordinates. An
+        // off-screen end frame (keyboard dismissing) yields 0 and restores the card.
+        let overlap = max(0, view.bounds.maxY - view.convert(end, from: nil).minY)
+        setKeyboardInset(overlap, note: note)
+    }
+
+    @objc private func keyboardWillHide(_ note: Notification) {
+        setKeyboardInset(0, note: note)
+    }
+
+    /// Shrinks (or restores) the WebView from the bottom by `inset`, animating in
+    /// step with the keyboard. The `100vh` page re-centres its card in the reduced
+    /// viewport, so the card stays fully visible above the keyboard and nothing
+    /// scrolls the background/chrome into view.
+    private func setKeyboardInset(_ inset: CGFloat, note: Notification) {
+        guard let bottom = webViewBottomConstraint, bottom.constant != -inset else { return }
+        bottom.constant = -inset
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int)
+            ?? Int(UIView.AnimationCurve.easeInOut.rawValue)
+        UIView.animate(
+            withDuration: duration, delay: 0,
+            options: UIView.AnimationOptions(rawValue: UInt(curveRaw) << 16),
+            animations: { [weak self] in
+                guard let self else { return }
+                self.view.layoutIfNeeded()
+                // Belt and braces: keep the (now content-sized) page pinned to the top
+                // so no residual WebKit auto-scroll can re-expose the chrome behind the card.
+                self.webView.scrollView.contentOffset.y = 0
+            }
+        )
     }
 
     // MARK: - Loading
@@ -681,9 +815,7 @@ public final class VoiceboxViewController: UIViewController {
             offline.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        if let close = closeButton {
-            view.bringSubviewToFront(close)
-        }
+        bringCloseControlToFront()
 
         self.offlineView = offline
     }

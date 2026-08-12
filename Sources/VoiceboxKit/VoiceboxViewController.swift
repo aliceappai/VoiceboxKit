@@ -489,6 +489,7 @@ public final class VoiceboxViewController: UIViewController {
             var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             var canAnimate = !reduce && typeof document.body.animate === 'function';
             function real(v) { return v && v !== 'none' && v !== 'rgba(0, 0, 0, 0)' && v !== 'transparent'; }
+            var revealedColor = null;   // solid bg colour, returned to native to back the cleared body
 
             if (revealBg) {
                 var host = document.getElementById('main') || document.body;
@@ -497,6 +498,7 @@ public final class VoiceboxViewController: UIViewController {
                 var image = real(cs.backgroundImage) ? cs.backgroundImage : bodyCs.backgroundImage;
                 var color = real(cs.backgroundColor) ? cs.backgroundColor : bodyCs.backgroundColor;
                 if (real(image) || real(color)) {
+                    if (real(color)) { revealedColor = color; }
                     var layer = document.getElementById('vbx-bg-reveal');
                     if (!layer) {
                         layer = document.createElement('div');
@@ -545,10 +547,25 @@ public final class VoiceboxViewController: UIViewController {
                     );
                 }
             }
+            return revealedColor;
         })();
         """
-        webView.evaluateJavaScript(js) { _, _ in
-            DispatchQueue.main.async { completion() }
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            DispatchQueue.main.async {
+                // The reveal moved the page's background onto a position:fixed layer and
+                // cleared the body. A fixed layer doesn't reliably cover during a keyboard
+                // resize in WKWebView, so the cleared (transparent) body can fall through
+                // to the 15% dim over the app behind (issue #246 — the Directory/inbox
+                // showing under the keyboard). Back the native view with the voicebox's own
+                // colour so any such gap shows that colour instead of the dim. An image-only
+                // background returns no colour here and keeps the dim (can't tile natively).
+                if let self, let css = result as? String,
+                   let color = UIColor(cssString: css), color.cgColor.alpha > 0.01 {
+                    self.view.backgroundColor = color
+                    self.onBackgroundColorDetected?(color)
+                }
+                completion()
+            }
         }
     }
 

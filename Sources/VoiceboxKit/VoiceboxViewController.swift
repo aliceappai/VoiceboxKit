@@ -17,6 +17,10 @@ public final class VoiceboxViewController: UIViewController {
     /// bar-button item, so the SYSTEM positions it at the app's standard trailing
     /// slot (see `installCloseButtonInNavBar`).
     private var closeNavBar: UINavigationBar?
+    /// Floating-card only: the native view that holds the voicebox's background (colour
+    /// and/or image) behind the WebView. The page's own background is stripped, so this
+    /// is the ONLY background — it always covers during a keyboard resize (issue #246).
+    private var backgroundRevealView: UIImageView?
     /// The WebView's bottom constraint, held so floating-card keyboard avoidance
     /// can shrink the card's viewport from the bottom (see `keyboardWillChangeFrame`).
     private var webViewBottomConstraint: NSLayoutConstraint?
@@ -477,67 +481,37 @@ public final class VoiceboxViewController: UIViewController {
         let anim = voiceboxView.entranceAnimation
         let revealBg = anim.contains(.backgroundReveal)
         let liftCard = anim.contains(.cardLiftIn)
-        guard revealBg || liftCard else {
-            // No entrance animation requested — just un-hide the WebView.
-            completion()
-            return
-        }
+        // Capture the page's background (colour + image), then STRIP it from the page so
+        // the WebView is fully transparent and the NATIVE layer behind it is the ONLY
+        // background. This removes the position:fixed reveal layer that WKWebView
+        // mis-covers when the keyboard opens (issue #246) — the background can no longer
+        // fall through to the dim. The card lift-in stays web-side; the background reveal
+        // is animated natively (see installNativeBackground).
         let js = """
         (function() {
-            var revealBg = \(revealBg);
             var liftCard = \(liftCard);
             var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             var canAnimate = !reduce && typeof document.body.animate === 'function';
             function real(v) { return v && v !== 'none' && v !== 'rgba(0, 0, 0, 0)' && v !== 'transparent'; }
-            var revealedColor = null;   // solid bg colour, returned to native to back the cleared body
+            var revealed = { color: null, image: null };
 
-            if (revealBg) {
-                var host = document.getElementById('main') || document.body;
-                var cs = getComputedStyle(host);
-                var bodyCs = getComputedStyle(document.body);
-                var image = real(cs.backgroundImage) ? cs.backgroundImage : bodyCs.backgroundImage;
-                var color = real(cs.backgroundColor) ? cs.backgroundColor : bodyCs.backgroundColor;
-                if (real(image) || real(color)) {
-                    if (real(color)) { revealedColor = color; }
-                    var layer = document.getElementById('vbx-bg-reveal');
-                    if (!layer) {
-                        layer = document.createElement('div');
-                        layer.id = 'vbx-bg-reveal';
-                        var s = layer.style;
-                        s.position = 'fixed'; s.top = '0'; s.left = '0'; s.right = '0'; s.bottom = '0';
-                        s.zIndex = '-1';                 // behind the card + page content
-                        s.pointerEvents = 'none';        // taps fall through (tap-outside dismiss still works)
-                        s.transformOrigin = 'center';
-                        s.willChange = 'transform, opacity';
-                        s.backgroundImage = image;
-                        s.backgroundColor = color;
-                        // Force a full-screen cover: the image can come from `body` while the
-                        // page's own size/repeat live on a smaller box (`#main` at 340px, or an
-                        // unset default of `auto`+`repeat`), which would TILE the image here.
-                        s.backgroundSize = 'cover';
-                        s.backgroundPosition = 'center';
-                        s.backgroundRepeat = 'no-repeat';
-                        document.body.appendChild(layer);
-                        // Lift the background off the page so it isn't painted twice (a static
-                        // copy at element level would sit on top of the z-index:-1 layer).
-                        host.style.setProperty('background', 'transparent', 'important');
-                        document.body.style.setProperty('background', 'transparent', 'important');
-                    }
-                    if (canAnimate) {
-                        layer.animate(
-                            [ { opacity: 0, transform: 'scale(1.08)' },
-                              { opacity: 1, transform: 'scale(1)' } ],
-                            { duration: 1500, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' }
-                        );
-                    } else {
-                        layer.style.opacity = '1'; layer.style.transform = 'none';
-                    }
-                }
-            }
+            var host = document.getElementById('main') || document.body;
+            var cs = getComputedStyle(host);
+            var bodyCs = getComputedStyle(document.body);
+            var image = real(cs.backgroundImage) ? cs.backgroundImage : bodyCs.backgroundImage;
+            var color = real(cs.backgroundColor) ? cs.backgroundColor : bodyCs.backgroundColor;
+            if (real(color)) { revealed.color = color; }
+            if (real(image)) { revealed.image = image; }
+
+            // Strip the page background so only the native layer paints it.
+            var old = document.getElementById('vbx-bg-reveal'); if (old) { old.remove(); }
+            host.style.setProperty('background', 'transparent', 'important');
+            document.body.style.setProperty('background', 'transparent', 'important');
+            document.documentElement.style.setProperty('background', 'transparent', 'important');
 
             if (liftCard && canAnimate) {
-                // A beat after the background, the card assembly (logo + card) lifts
-                // up and scales into place — a layered, premium-feeling entrance.
+                // A beat after the background, the card assembly (logo + card) lifts up
+                // and scales into place — a layered, premium-feeling entrance.
                 var main = document.getElementById('main');
                 if (main && typeof main.animate === 'function') {
                     main.animate(
@@ -547,24 +521,73 @@ public final class VoiceboxViewController: UIViewController {
                     );
                 }
             }
-            return revealedColor;
+            return revealed;
         })();
         """
         webView.evaluateJavaScript(js) { [weak self] result, _ in
             DispatchQueue.main.async {
-                // The reveal moved the page's background onto a position:fixed layer and
-                // cleared the body. A fixed layer doesn't reliably cover during a keyboard
-                // resize in WKWebView, so the cleared (transparent) body can fall through
-                // to the 15% dim over the app behind (issue #246 — the Directory/inbox
-                // showing under the keyboard). Back the native view with the voicebox's own
-                // colour so any such gap shows that colour instead of the dim. An image-only
-                // background returns no colour here and keeps the dim (can't tile natively).
-                if let self, let css = result as? String,
-                   let color = UIColor(cssString: css), color.cgColor.alpha > 0.01 {
-                    self.view.backgroundColor = color
-                    self.onBackgroundColorDetected?(color)
+                guard let self else { completion(); return }
+                if let dict = result as? [String: Any] {
+                    let color = (dict["color"] as? String)
+                        .flatMap { UIColor(cssString: $0) }
+                        .flatMap { $0.cgColor.alpha > 0.01 ? $0 : nil }
+                    let imageURL = (dict["image"] as? String)
+                        .flatMap { Self.backgroundImageURL(fromCSS: $0) }
+                    self.installNativeBackground(color: color, imageURL: imageURL, animated: revealBg)
                 }
                 completion()
+            }
+        }
+    }
+
+    /// Extracts the first URL from a CSS `background-image` value such as
+    /// `url("https://…")` (also handles single-quoted / un-quoted forms).
+    private static func backgroundImageURL(fromCSS css: String) -> URL? {
+        guard let open = css.range(of: "url("),
+              let close = css.range(of: ")", range: open.upperBound..<css.endIndex) else { return nil }
+        let inner = css[open.upperBound..<close.lowerBound]
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
+        guard inner.hasPrefix("http") else { return nil }   // skip data:/gradients/etc.
+        return URL(string: inner)
+    }
+
+    /// Floating card: the voicebox's background lives ENTIRELY on this native view behind
+    /// the (background-stripped) WebView, so it always covers during a keyboard resize —
+    /// no position:fixed web layer to mis-cover (issue #246). Holds the solid colour
+    /// and/or the image (aspect-fill). When `animated`, it fades + scales in to reproduce
+    /// the old web "background reveal" entrance.
+    private func installNativeBackground(color: UIColor?, imageURL: URL?, animated: Bool) {
+        guard isFloatingCard, backgroundRevealView == nil,
+              color != nil || imageURL != nil else { return }
+        let bg = UIImageView()
+        bg.contentMode = .scaleAspectFill
+        bg.clipsToBounds = true
+        bg.backgroundColor = color
+        bg.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(bg, at: 0)   // behind the WebView, over the native dim
+        NSLayoutConstraint.activate([
+            bg.topAnchor.constraint(equalTo: view.topAnchor),
+            bg.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bg.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bg.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        backgroundRevealView = bg
+        if let color { onBackgroundColorDetected?(color) }
+
+        if let imageURL {
+            // Served from the WebView's cache (it just loaded this asset).
+            URLSession.shared.dataTask(with: imageURL) { [weak bg] data, _, _ in
+                guard let data, let image = UIImage(data: data) else { return }
+                DispatchQueue.main.async { bg?.image = image }
+            }.resume()
+        }
+
+        if animated && !UIAccessibility.isReduceMotionEnabled {
+            bg.alpha = 0
+            bg.transform = CGAffineTransform(scaleX: 1.08, y: 1.08)
+            UIView.animate(withDuration: 1.2, delay: 0, options: [.curveEaseOut]) {
+                bg.alpha = 1
+                bg.transform = .identity
             }
         }
     }
@@ -669,6 +692,12 @@ public final class VoiceboxViewController: UIViewController {
             if voiceboxView.presentationMode == .fitContent {
                 measureContentHeight()
             }
+            // Drop WKWebView's default keyboard accessory bar (the ‹ › / Done toolbar
+            // it shows above the keyboard for web form fields) once the page is up —
+            // the recorder's contact form doesn't need it, and it read as a coloured
+            // strip above the keyboard (issue #246). Idempotent, so re-running on each
+            // load (incl. a relaunched web content process) is safe.
+            webView.removeInputAccessoryBar()
         }
     }
 
@@ -980,5 +1009,48 @@ private extension UIColor {
         guard parts.count >= 3 else { return nil }
         let alpha = parts.count == 4 ? parts[3] : 1.0
         self.init(red: parts[0] / 255, green: parts[1] / 255, blue: parts[2] / 255, alpha: alpha)
+    }
+}
+
+// MARK: - Remove WKWebView keyboard accessory bar
+
+/// Donor whose `inputAccessoryView` getter (returning nil) is grafted onto the
+/// runtime subclass of `WKContentView` created below.
+private final class VoiceboxNoInputAccessory: NSObject {
+    @objc var inputAccessoryView: AnyObject? { nil }
+}
+
+private extension WKWebView {
+    /// Removes the system "form assistant" accessory bar (the ‹ › / Done toolbar
+    /// shown above the keyboard for web form fields). There is no public API for
+    /// this: the real first responder is the private `WKContentView`, so we swap
+    /// THAT view's class for a runtime subclass whose `inputAccessoryView` returns
+    /// nil. Scoped to this web view's own content view (not a global swizzle), and
+    /// idempotent — a second call just re-applies the cached subclass.
+    func removeInputAccessoryBar() {
+        guard let target = scrollView.subviews.first(where: {
+            String(describing: type(of: $0)).hasPrefix("WKContent")
+        }) else { return }
+
+        let subclassName = "\(type(of: target))_VBXNoInputAccessory"
+        if let cached = NSClassFromString(subclassName) {
+            object_setClass(target, cached)
+            return
+        }
+        guard let baseClass = object_getClass(target),
+              let subclass = objc_allocateClassPair(baseClass, subclassName, 0),
+              let donor = class_getInstanceMethod(
+                VoiceboxNoInputAccessory.self,
+                #selector(getter: VoiceboxNoInputAccessory.inputAccessoryView))
+        else { return }
+
+        class_addMethod(
+            subclass,
+            #selector(getter: UIResponder.inputAccessoryView),
+            method_getImplementation(donor),
+            method_getTypeEncoding(donor)
+        )
+        objc_registerClassPair(subclass)
+        object_setClass(target, subclass)
     }
 }

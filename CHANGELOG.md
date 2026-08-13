@@ -5,6 +5,24 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1]
+
+### Fixed
+
+- Floating card: the recorder now avoids the keyboard by shrinking the WebView so
+  the card re-centres above it, instead of scrolling the page up and revealing the
+  chrome behind the card.
+- Floating card: the voicebox's background (colour or image) is now painted on a
+  native layer behind the WebView, so it always fills the screen — including behind
+  the keyboard. Previously the background sat on a `position: fixed` web layer that
+  WKWebView mis-positions during a keyboard resize, letting the underlying app show
+  through.
+- Floating card: the close button is positioned via a real nav-bar item so it lines
+  up with the host app's own nav buttons on any screen (and the iOS 26 shared glass
+  background behind it is suppressed).
+- Floating card: removed WKWebView's default keyboard accessory bar (the prev/next/
+  Done toolbar) on the recorder's contact form.
+
 ## [1.1.0]
 
 ### Added

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import WebKit
 
 /// Manages prefetching and cache validation for Voicebox handles.
@@ -37,6 +38,26 @@ final class VoiceboxCache {
     private final class WarmupObserver: NSObject, WKNavigationDelegate {
         var onFinish: (() -> Void)?
         var onFail: (() -> Void)?
+        /// Handle being warmed. Load-bearing: the redirect check below compares the
+        /// destination against THIS handle's recorder path.
+        var handle: String = "-"
+
+        /// vbx-web 303s an unknown /@handle to the directory root, and the warm is where most
+        /// recorder loads happen — so a dead handle surfaces here first.
+        func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+            let destination = webView.url
+            let stillRecorder = destination.map { VoiceboxURLBuilder.isRecorderPath($0, handle: handle) } ?? true
+
+            guard stillRecorder else {
+                // Redirected off this handle's page entirely — vbx-web does this (303) when the
+                // handle doesn't resolve. Failing the warm is essential: otherwise it finishes
+                // "successfully" holding the DIRECTORY page, `consumePreloadedWebView` hands
+                // that out as a hit, and the recorder sheet opens straight onto the browse page
+                // with no load and no error.
+                onFail?()
+                return
+            }
+        }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             onFinish?()
@@ -54,7 +75,119 @@ final class VoiceboxCache {
     /// Preloaded WebViews keyed by handle, ready for immediate display.
     private var preloadedWebViews: [String: PreloadedEntry] = [:]
 
-    private init() {}
+    /// Handles in warm order, oldest first — the eviction order for ``maxWarmedWebViews``.
+    /// A plain array (not an ordered dictionary) because this holds a handful of entries
+    /// at most and every operation here is already O(n) over that handful.
+    private var warmOrder: [String] = []
+
+    /// How many warmed WebViews may be held at once.
+    ///
+    /// Each entry retains a live `WKWebView`, which is a whole WebContent process — tens of
+    /// MB apiece. Callers that warm from a LIST (the Directory's card list and map, where the
+    /// handle is only known from what the user is looking at) would otherwise grow this pool
+    /// without limit as the user browses.
+    ///
+    /// Four is the host's realistic concurrent working set: the voicebox currently open, the
+    /// in-app feedback handle, and a Directory candidate from EACH of its two surfaces (the
+    /// card list and the map warm independently). Sized at three, the oldest — usually the
+    /// feedback handle — was evicted as soon as someone browsed the Directory, so opening
+    /// Help went from instant to a full load.
+    ///
+    /// Evicting is cheap and safe — a miss just falls back to a normal load.
+    private static let maxWarmedWebViews = 4
+
+    /// An idle, already-constructed `WKWebView` kept ready for a handle we could NOT predict.
+    ///
+    /// The preload pool only helps handles someone thought to warm. The Directory's whole
+    /// problem is the opposite: any of hundreds of pins can be tapped, and the handle isn't
+    /// known until the tap. Measurements showed 0.6–3.2 s of every such open going to work
+    /// done BEFORE the network was touched — dominated by constructing a `WKWebView` and
+    /// launching its WebContent process.
+    ///
+    /// That cost is entirely handle-independent, so it can be paid in advance ONCE and reused
+    /// by every unpredicted open. The spare loads `about:blank` only: enough to force the
+    /// process to launch, with no network request and nothing to go stale.
+    private var hotSpare: WKWebView?
+
+    /// Absorbs the spare's own `about:blank` navigation callbacks while it sits idle.
+    ///
+    /// `WKWebView.navigationDelegate` is weak, so without holding this the spare would have
+    /// no delegate and the blank load's `didFinish` could land on the VIEW CONTROLLER's
+    /// delegate once it adopts the spare — which would mark the recorder "loaded" before it
+    /// had loaded anything, log a bogus ready time, and switch off the unavailable-handle
+    /// guard (which only applies before the first completed load).
+    private var hotSpareObserver: WarmupObserver?
+
+    /// Whether the host has actually used the SDK yet. The spare costs a WebContent process
+    /// (tens of MB), so an app that never opens a recorder must never be charged for one — it
+    /// is created only after a real preload or a real open, never at import time.
+    private var hasBeenUsed = false
+
+    private init() {
+        // The spare is a pure cache: drop it whenever the system or the user's own behaviour
+        // says holding a spare process is the wrong trade. It is rebuilt lazily on the next
+        // preload/open, so losing it only ever costs the spin-up we were trying to avoid.
+        let center = NotificationCenter.default
+        center.addObserver(
+            self,
+            selector: #selector(releaseHotSpare),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(releaseHotSpare),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+    }
+
+    // MARK: - Hot spare
+
+    /// Builds the spare if the SDK is in use and there isn't one already. Cheap and idempotent.
+    func prepareHotSpareIfNeeded() {
+        guard hasBeenUsed, hotSpare == nil else { return }
+
+        let webView = WKWebView(frame: .zero, configuration: VoiceboxWebScripts.makeConfiguration())
+        let observer = WarmupObserver()
+        observer.handle = "hotSpare"
+        webView.navigationDelegate = observer
+        hotSpareObserver = observer
+        // Forces the WebContent process to actually launch — an untouched WKWebView may defer
+        // that until its first real load, which would leave the cost exactly where we are
+        // trying to remove it from. Empty local content, so this costs no network.
+        webView.loadHTMLString("", baseURL: nil)
+        hotSpare = webView
+    }
+
+    /// Hands over the spare (if any) and immediately starts building its replacement, so the
+    /// open after this one is just as cheap. Returns nil when no spare is ready.
+    func takeHotSpare() -> WKWebView? {
+        hasBeenUsed = true
+        guard let spare = hotSpare else {
+            // Deferred, NOT inline: building the spare here would put a second WebView
+            // construction on the very open we already failed to spare, making this path
+            // slower than having no spare mechanism at all.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.prepareHotSpareIfNeeded()
+            }
+            return nil
+        }
+        hotSpare = nil
+        hotSpareObserver = nil
+        // Next runloop, not now: building the replacement competes with the load we are about
+        // to start, and the replacement is for a tap that hasn't happened yet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.prepareHotSpareIfNeeded()
+        }
+        return spare
+    }
+
+    @objc private func releaseHotSpare() {
+        guard hotSpare != nil else { return }
+        hotSpare = nil
+        hotSpareObserver = nil
+    }
 
     // MARK: - UserDefaults Keys
 
@@ -95,29 +228,46 @@ final class VoiceboxCache {
 
     // MARK: - Preloaded WebView
 
-    /// Returns a preloaded WKWebView for the handle, but ONLY if it was warmed
-    /// with the exact same URL being requested AND its background navigation
-    /// already finished successfully — removes it from the pool on a hit.
+    /// What ``consumePreloadedWebView(for:matching:)`` found for this exact URL.
+    enum Adoption {
+        /// Warm finished successfully — the page is rendered, show it immediately.
+        case ready(WKWebView)
+        /// Warm is still in flight for this exact URL. The WebView is handed over anyway so
+        /// the caller can wait for the load already running instead of starting a second,
+        /// competing one for the same page — which is what used to happen, and it made the
+        /// open SLOWER than doing nothing (two loads sharing the bandwidth, the finished
+        /// warm then thrown away).
+        case warming(WKWebView)
+    }
+
+    /// Adopts the preloaded WebView for this handle when it was warmed with the exact same
+    /// URL — as ``Adoption/ready(_:)`` if its navigation already finished, or
+    /// ``Adoption/warming(_:)`` if that navigation is still running. Removes it from the
+    /// pool either way.
     ///
-    /// Returns `nil` (leaving the pool untouched) when: there's no entry, the
-    /// URL doesn't match, the warm-up is still in flight, or it failed. Every
-    /// one of those cases means the caller must fall back to a fresh load —
-    /// this never hands back a WebView the caller can't trust is actually
-    /// showing the requested content.
-    func consumePreloadedWebView(for handle: String, matching url: URL) -> WKWebView? {
+    /// Returns `nil` (leaving the pool untouched) when there's no entry, the URL doesn't
+    /// match, or the warm failed — the caller must then do a normal load. This never hands
+    /// back a WebView showing content other than the requested URL.
+    func consumePreloadedWebView(for handle: String, matching url: URL) -> Adoption? {
         guard let entry = preloadedWebViews[handle],
               entry.url == url,
-              entry.isReady,
               !entry.didFail
         else {
+            // A miss is the whole reason an open is slow, and the causes need very different
+            // fixes (never warmed / params drifted / the warm itself failed), so name which
+            // one it was rather than just "miss".
             return nil
         }
+        if entry.isReady {
+        } else {
+        }
         preloadedWebViews.removeValue(forKey: handle)
+        warmOrder.removeAll { $0 == handle }
         // Start warming a replacement in the background
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.warmWebViewCache(handle: handle, url: url)
         }
-        return entry.webView
+        return entry.isReady ? .ready(entry.webView) : .warming(entry.webView)
     }
 
     /// Returns `true` if a preloaded WebView has finished loading successfully
@@ -149,7 +299,16 @@ final class VoiceboxCache {
         // don't churn WebViews.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let existing = self.preloadedWebViews[handle], existing.url == url { return }
+            // A real preload means the SDK is genuinely in use, so a spare is now worth its
+            // memory — an unpredicted open (Directory pin/card) can then skip process launch.
+            self.hasBeenUsed = true
+            self.prepareHotSpareIfNeeded()
+            if let existing = self.preloadedWebViews[handle], existing.url == url {
+                // Not a problem — this is the dedupe doing its job when a screen warms on
+                // appear AND on foreground AND on prompt change. Logged so a "why didn't my
+                // preload run?" question has an answer other than silence.
+                return
+            }
             self.warmWebViewCache(handle: handle, url: url)
         }
     }
@@ -168,6 +327,7 @@ final class VoiceboxCache {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         let observer = WarmupObserver()
+        observer.handle = handle
         webView.navigationDelegate = observer
 
         // Guard against a stale callback: if this handle's entry was replaced
@@ -176,6 +336,8 @@ final class VoiceboxCache {
         observer.onFinish = { [weak self, weak webView] in
             guard let self, let webView, self.preloadedWebViews[handle]?.webView === webView else { return }
             self.preloadedWebViews[handle]?.isReady = true
+            // Elapsed here is the head start a later open gets for free. If it routinely
+            // exceeds the time between warming and tapping, the warm is starting too late.
             // Mark cached only once a warm has actually succeeded, so
             // `hasCachedContent` (which suppresses the loading skeleton on a
             // cache-first open) can't be true before anything is really cached.
@@ -190,5 +352,21 @@ final class VoiceboxCache {
 
         // Store as ready-to-use (replaces any existing one for this handle)
         preloadedWebViews[handle] = PreloadedEntry(webView: webView, url: url, observer: observer)
+        warmOrder.removeAll { $0 == handle }
+        warmOrder.append(handle)
+        evictOldestWarmedIfNeeded()
+    }
+
+    /// Drops the oldest warmed WebViews until the pool fits ``maxWarmedWebViews``.
+    ///
+    /// Releasing the entry releases its `WKWebView` (and the `WarmupObserver` it retains),
+    /// which tears down the WebContent process — that IS the point. Dropping one mid-warm is
+    /// harmless: the observer dies with it, and the handle simply takes the normal load path
+    /// next time it's opened.
+    private func evictOldestWarmedIfNeeded() {
+        while warmOrder.count > Self.maxWarmedWebViews {
+            let oldest = warmOrder.removeFirst()
+            preloadedWebViews.removeValue(forKey: oldest)
+        }
     }
 }

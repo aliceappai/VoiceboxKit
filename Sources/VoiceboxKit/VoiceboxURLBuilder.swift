@@ -35,4 +35,18 @@ enum VoiceboxURLBuilder {
         components.queryItems = queryItems
         return components.url!
     }
+
+    /// Whether `url` is still THIS handle's recorder page.
+    ///
+    /// vbx-web answers an unknown or unavailable `/@handle` with a 303 to the directory root
+    /// (`RecorderController#set_voicebox`), preserving the query string — so the redirect is
+    /// indistinguishable from a normal load unless the PATH is checked. Without this, a dead
+    /// handle silently renders the public directory browse page inside a recorder sheet.
+    ///
+    /// Compared case-insensitively because vbx-web downcases the handle server-side, and by
+    /// prefix so a deeper recorder path still counts as the recorder.
+    static func isRecorderPath(_ url: URL, handle: String) -> Bool {
+        guard !handle.isEmpty else { return true }
+        return url.path.lowercased().hasPrefix("/@\(handle.lowercased())")
+    }
 }

@@ -18,6 +18,7 @@ enum VoiceboxWebScripts {
     static let eventMessageName = "voiceboxEvent"
     static let bgColorMessageName = "voiceboxBgColor"
     static let contentHeightMessageName = "voiceboxContentHeight"
+    static let domReadyMessageName = "voiceboxDomReady"
 
     // MARK: - Configuration
 
@@ -34,6 +35,7 @@ enum VoiceboxWebScripts {
         config.websiteDataStore = .default()
         config.userContentController.addUserScript(baseUserScript())
         config.userContentController.addUserScript(eventUserScript())
+        config.userContentController.addUserScript(domReadyUserScript())
         return config
     }
 
@@ -48,6 +50,43 @@ enum VoiceboxWebScripts {
             var style = document.createElement('style');
             style.textContent = '* { -webkit-user-select: none !important; -webkit-touch-callout: none !important; }';
             (document.head || document.documentElement).appendChild(style);
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+    }
+
+    /// Signals that the recorder is PAINTED and usable, which happens well before the page
+    /// has finished loading.
+    ///
+    /// `didFinish` — what the reveal used to wait for — fires on the window `load` event,
+    /// i.e. after every subresource has landed. Measured on the recorder that is ~400 ms
+    /// after DOMContentLoaded, and none of it changes what the user sees: the card, prompt,
+    /// language picker and Tap-to-Talk button are all server-rendered HTML styled by CSS
+    /// that is already in the cache. The straggling requests are the visualizer, ActionCable,
+    /// ahoy and Bugsnag — background machinery, not pixels.
+    ///
+    /// Injected `.atDocumentEnd` — the document is parsed and its render-blocking CSS (all
+    /// cached) has been applied, so the card is styled and ready to show.
+    ///
+    /// Deliberately posts IMMEDIATELY rather than waiting on `requestAnimationFrame`. rAF is
+    /// driven by the display link, and a WKWebView that is off-screen or hidden does not
+    /// paint — so its rAF callbacks simply queue up. That cost most of the saving this signal
+    /// exists for (measured: DCL at 1,514 ms but the rAF post at 1,697 ms), and on the hot
+    /// spare it was worse than useless: the spare's blank document queued a callback that
+    /// only fired once the WebView was added to a real hierarchy, arriving AFTER adoption and
+    /// revealing an empty sheet.
+    ///
+    /// The current `location.href` goes with the message so the receiver can tell which
+    /// document is speaking, since a recycled WebView may have more than one in its past.
+    private static func domReadyUserScript() -> WKUserScript {
+        let source = """
+        (function() {
+            try {
+                var mh = window.webkit && window.webkit.messageHandlers;
+                if (mh && mh.\(domReadyMessageName)) {
+                    mh.\(domReadyMessageName).postMessage(String(window.location.href));
+                }
+            } catch (e) {}
         })();
         """
         return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)

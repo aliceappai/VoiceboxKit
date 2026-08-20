@@ -112,4 +112,56 @@ final class URLConstructionTests: XCTestCase {
         // Only UTM params should be present
         XCTAssertEqual(components.queryItems?.count, 2)
     }
+
+    // MARK: - isRecorderPath (unavailable-handle guard)
+    //
+    // vbx-web answers an unknown or unavailable /@handle with a 303 to the directory root,
+    // preserving the query string — so the redirect is indistinguishable from a normal load
+    // unless the PATH is checked. Getting this predicate wrong has two bad failure modes:
+    // too strict blocks real recorders, too loose renders the public directory browse page
+    // inside a recorder sheet (which is exactly the bug this guard was added for).
+
+    func testIsRecorderPathAcceptsOwnRecorder() {
+        let url = URL(string: "https://vbx.to/@alice-feedback?utm_source=voiceboxkit")!
+        XCTAssertTrue(VoiceboxURLBuilder.isRecorderPath(url, handle: "alice-feedback"))
+    }
+
+    func testIsRecorderPathIgnoresCase() {
+        // vbx-web downcases the handle server-side, so a caller passing mixed case must
+        // still match its own recorder rather than being treated as a dead handle.
+        let url = URL(string: "https://vbx.to/@AliceFeedback")!
+        XCTAssertTrue(VoiceboxURLBuilder.isRecorderPath(url, handle: "alicefeedback"))
+        XCTAssertTrue(VoiceboxURLBuilder.isRecorderPath(url, handle: "AliceFeedback"))
+    }
+
+    func testIsRecorderPathRejectsDirectoryRoot() {
+        // The actual observed failure: /@amd -> 303 -> / with the query string carried over.
+        let url = URL(string: "https://vbx.to/?utm_source=voiceboxkit&utm_medium=ios_sdk")!
+        XCTAssertFalse(VoiceboxURLBuilder.isRecorderPath(url, handle: "amd"))
+    }
+
+    func testIsRecorderPathRejectsADifferentHandle() {
+        let url = URL(string: "https://vbx.to/@someone-else")!
+        XCTAssertFalse(VoiceboxURLBuilder.isRecorderPath(url, handle: "alice-feedback"))
+    }
+
+    func testIsRecorderPathRejectsBlankDocument() {
+        // The hot spare arrives holding about:blank and runs the same DOM-ready script; its
+        // signal must never be mistaken for the recorder having painted.
+        let url = URL(string: "about:blank")!
+        XCTAssertFalse(VoiceboxURLBuilder.isRecorderPath(url, handle: "alice-feedback"))
+    }
+
+    func testIsRecorderPathAcceptsDeeperRecorderPaths() {
+        // Matched by prefix so the recorder's own sub-paths still count as the recorder.
+        let url = URL(string: "https://vbx.to/@alice-feedback/messages")!
+        XCTAssertTrue(VoiceboxURLBuilder.isRecorderPath(url, handle: "alice-feedback"))
+    }
+
+    func testIsRecorderPathAllowsEverythingForABlankHandle() {
+        // No handle means nothing to compare against; the guard must not block every
+        // navigation in that case.
+        let url = URL(string: "https://vbx.to/")!
+        XCTAssertTrue(VoiceboxURLBuilder.isRecorderPath(url, handle: ""))
+    }
 }

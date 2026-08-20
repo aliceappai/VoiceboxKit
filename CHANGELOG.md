@@ -5,6 +5,40 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Pre-built "hot spare" WebView so an open we could not predict (a Directory card or map
+  pin, where the handle is unknown until the tap) skips WKWebView construction and
+  WebContent process launch. Measured 0.6–3.2 s of every such open before any network
+  request; now 13–16 ms on device. Created only after real SDK use, released on memory
+  warning and on backgrounding.
+- Tapping a voicebox whose warm-up is still in flight now joins that load instead of
+  abandoning it and starting a competing one for the same URL. Measured 5.1 s -> 1.3 s.
+
+### Changed
+
+- The recorder is revealed once its DOM is parsed and styled, rather than when the window
+  `load` event fires. The straggling requests (visualizer, ActionCable, analytics, error
+  reporting) change nothing on screen — on one measured device open this showed content
+  1,452 ms earlier.
+- Floating-card entrance retimed to match standard iOS modal transitions: background reveal
+  1.2 s -> 0.35 s, card lift-in 850 ms/180 ms delay -> 300 ms/60 ms. The entrance plays
+  after content is ready, so on a preload hit (~14 ms) the animation *was* the entire
+  perceived open. Reduce Motion still skips both.
+- The preloaded-WebView pool is capped at 4 with least-recently-warmed eviction. It was
+  unbounded, and each entry retains a whole WebContent process.
+
+### Fixed
+
+- The recorder no longer renders the public Voicebox directory inside its own sheet. vbx-web
+  answers an unknown or unavailable `/@handle` with a 303 to the directory root, preserving
+  the query string, which was indistinguishable from a normal load. Both the live and the
+  warm path now verify the document is still this handle's recorder; the live path cancels
+  and reports `voiceboxDidFail`, and the warm path fails so it can never be handed out as a
+  cache hit (which opened straight onto the browse page with no load and no error).
+
 ## [1.1.1]
 
 ### Fixed

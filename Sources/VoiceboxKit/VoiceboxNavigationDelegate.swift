@@ -11,6 +11,14 @@ final class VoiceboxNavigationDelegate: NSObject, WKNavigationDelegate {
     var onError: ((Error) -> Void)?
     /// Fallback: fired when URL navigates to a path containing `/sent/`.
     var onMessageSubmitted: (() -> Void)?
+    /// Fired when the INITIAL load is redirected off this handle's recorder page, i.e. the
+    /// handle doesn't resolve server-side. Carries the destination we refused to show.
+    var onHandleUnavailable: ((URL) -> Void)?
+
+    /// Whether a load has completed for this delegate yet. The unavailable-handle guard in
+    /// `decidePolicyFor` only applies BEFORE that: once the recorder is up, whatever it
+    /// navigates to next is the recorder's own business and must not be second-guessed.
+    private var hasCompletedFirstLoad = false
 
     init(handle: String) {
         self.handle = handle
@@ -33,6 +41,21 @@ final class VoiceboxNavigationDelegate: NSObject, WKNavigationDelegate {
            host.hasSuffix("vbx.to")
             || host.hasSuffix("voicebox.ai")
             || (configuredHost.map { host == $0 || host.hasSuffix(".\($0)") } ?? false) {
+
+            // The handle didn't resolve: vbx-web 303s an unknown /@handle to the directory
+            // root, carrying the query string over, so this looks like an ordinary allowed
+            // navigation. Letting it through renders the public DIRECTORY BROWSE PAGE inside
+            // the recorder sheet — which is what a user sees as "it opened the wrong thing".
+            //
+            // Only before the first completed load, and only for the main frame: after the
+            // recorder is up, its own navigations are none of our business.
+            if !hasCompletedFirstLoad,
+               navigationAction.targetFrame?.isMainFrame ?? true,
+               !VoiceboxURLBuilder.isRecorderPath(url, handle: handle) {
+                decisionHandler(.cancel)
+                onHandleUnavailable?(url)
+                return
+            }
 
             // Fallback: detect navigation to /sent/ URL pattern
             if url.path.contains("/sent/") {
@@ -58,6 +81,7 @@ final class VoiceboxNavigationDelegate: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        hasCompletedFirstLoad = true
         onLoadingStateChanged?(false)
     }
 

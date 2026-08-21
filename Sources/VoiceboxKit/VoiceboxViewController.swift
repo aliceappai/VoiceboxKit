@@ -41,7 +41,12 @@ public final class VoiceboxViewController: UIViewController {
         return 0
     }
     private var usedPreloadedWebView = false
+    /// Adopted a warm that was still in flight for this exact URL, so `loadVoicebox()` must
+    /// NOT issue a request — the one already running is the one we're waiting on.
+    private var joinedInFlightWarm = false
     private var hasAppeared = false
+    /// One-shot latch for `revealContent(documentURL:)` — DOM-ready and `didFinish` both call it.
+    private var didReveal = false
     private var registeredContentHeightHandler = false
     /// Whether THIS controller currently holds a `VoiceboxScreenAwake` reference, so the
     /// acquire/release pair stays balanced across repeated appear/disappear cycles.
@@ -51,6 +56,7 @@ public final class VoiceboxViewController: UIViewController {
     private static let contentHeightMessageName = VoiceboxWebScripts.contentHeightMessageName
     private static let voiceboxEventMessageName = VoiceboxWebScripts.eventMessageName
     private static let bgColorMessageName = VoiceboxWebScripts.bgColorMessageName
+    private static let domReadyMessageName = VoiceboxWebScripts.domReadyMessageName
 
     /// Called on the main thread when JS detects the web page's background colour.
     /// The SwiftUI layer uses this to update `presentationBackground` dynamically
@@ -171,7 +177,8 @@ public final class VoiceboxViewController: UIViewController {
         // this EXACT URL (same handle + params); otherwise a mismatched preload
         // (e.g. different email/prompt) would silently show stale content.
         let targetURL = voiceboxView.buildURL()
-        if let preloaded = VoiceboxCache.shared.consumePreloadedWebView(for: voiceboxView.handle, matching: targetURL) {
+        switch VoiceboxCache.shared.consumePreloadedWebView(for: voiceboxView.handle, matching: targetURL) {
+        case .ready(let preloaded):
             webView = preloaded
             usedPreloadedWebView = true
             // Apply visual settings that makeWebView() would normally set
@@ -182,8 +189,29 @@ public final class VoiceboxViewController: UIViewController {
             // the footer/background hiding would only work on fresh loads —
             // the source of the "sometimes shows chrome, sometimes not" flakiness.
             voiceboxView.applyChromeCSSNow(to: webView)
-        } else {
-            webView = voiceboxView.makeWebView()
+
+        case .warming(let inFlight):
+            // Same URL, load already running. Adopt it and wait: `loadVoicebox()` deliberately
+            // issues no request, and the navigation delegate installed below picks up the
+            // in-flight navigation's `didFinish`. The chrome CSS user script added by
+            // `applyWebViewSettings` still applies, because that navigation has not committed
+            // its document yet.
+            webView = inFlight
+            usedPreloadedWebView = false
+            joinedInFlightWarm = true
+            voiceboxView.applyWebViewSettings(webView)
+
+        case .none:
+            // Nothing warmed for this URL — the Directory's normal case, since the tapped
+            // handle is unknowable in advance. Take the pre-built spare so this open at least
+            // skips constructing a WKWebView and launching its WebContent process, which
+            // measured as the single largest slice of an unpredicted open.
+            if let spare = VoiceboxCache.shared.takeHotSpare() {
+                webView = spare
+                voiceboxView.applyWebViewSettings(webView)
+            } else {
+                webView = voiceboxView.makeWebView()
+            }
             usedPreloadedWebView = false
         }
 
@@ -234,6 +262,9 @@ public final class VoiceboxViewController: UIViewController {
         navigationDelegate.onError = { [weak self] error in
             self?.handleLoadError(error)
         }
+        navigationDelegate.onHandleUnavailable = { [weak self] destination in
+            self?.handleUnavailableHandle(redirectedTo: destination)
+        }
         // Fallback: URL /sent/ pattern detection for message submission
         navigationDelegate.onMessageSubmitted = { [weak self] in
             guard let self else { return }
@@ -249,6 +280,7 @@ public final class VoiceboxViewController: UIViewController {
         // and just needs its handler registered here.
         webView.configuration.userContentController.add(self, name: Self.voiceboxEventMessageName)
         webView.configuration.userContentController.add(self, name: Self.bgColorMessageName)
+        webView.configuration.userContentController.add(self, name: Self.domReadyMessageName)
 
         // For fitContent mode, register message handler to receive content height
         if voiceboxView.presentationMode == .fitContent {
@@ -273,6 +305,7 @@ public final class VoiceboxViewController: UIViewController {
         }
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.voiceboxEventMessageName)
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.bgColorMessageName)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.domReadyMessageName)
         if registeredContentHeightHandler {
             webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.contentHeightMessageName)
         }
@@ -468,6 +501,24 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
+    // MARK: - Entrance timing
+    //
+    // The entrance plays AFTER the content is ready, so its duration is added directly to
+    // what the user experiences as "how long the recorder took to open" — on a warm preload
+    // hit (~25 ms to ready) the animation WAS the entire perceived open.
+    //
+    // These were 1.2 s and 850 ms/180 ms. Measured against a ~1.1–1.7 s load that put roughly
+    // a second of pure animation on top of every open, which read as lag. Retimed to the
+    // range iOS itself uses for modal transitions (~0.3 s), which keeps the reveal and the
+    // lift-in legible while removing the wait. Reduce Motion still skips both entirely.
+
+    /// Background reveal: fade + settle from a slight scale-up.
+    private static let backgroundRevealDuration: TimeInterval = 0.35
+    /// Card lift-in, run by the page's own Web Animations API (milliseconds).
+    private static let cardLiftInDurationMs = 300
+    /// Delay before the card lift-in, so it reads as following the background (milliseconds).
+    private static let cardLiftInDelayMs = 60
+
     /// Floating card only: the one-shot entrance, honouring `entranceAnimation`.
     /// With `.backgroundReveal`, the full-screen background scales down slightly and
     /// fades in; with `.cardLiftIn`, the card assembly (logo + card) lifts up and
@@ -517,7 +568,7 @@ public final class VoiceboxViewController: UIViewController {
                     main.animate(
                         [ { opacity: 0, transform: 'translateY(26px) scale(0.96)' },
                           { opacity: 1, transform: 'translateY(0) scale(1)' } ],
-                        { duration: 850, delay: 180, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'both' }
+                        { duration: \(Self.cardLiftInDurationMs), delay: \(Self.cardLiftInDelayMs), easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'both' }
                     );
                 }
             }
@@ -585,7 +636,7 @@ public final class VoiceboxViewController: UIViewController {
         if animated && !UIAccessibility.isReduceMotionEnabled {
             bg.alpha = 0
             bg.transform = CGAffineTransform(scaleX: 1.08, y: 1.08)
-            UIView.animate(withDuration: 1.2, delay: 0, options: [.curveEaseOut]) {
+            UIView.animate(withDuration: Self.backgroundRevealDuration, delay: 0, options: [.curveEaseOut]) {
                 bg.alpha = 1
                 bg.transform = .identity
             }
@@ -645,6 +696,11 @@ public final class VoiceboxViewController: UIViewController {
 
     private func loadVoicebox() {
         if usedPreloadedWebView {
+            // Reveal through the same one-shot path as every other route rather than logging
+            // separately here — doing both produced two contradictory `open READY` lines for
+            // one open, and short-circuiting the latch instead would skip `stopLoading()` and
+            // leave the WebView at alpha 0 forever.
+            revealContent(documentURL: nil)
             // Safe to skip the reload entirely: `VoiceboxCache.consumePreloadedWebView`
             // only ever hands back a WebView whose background navigation already
             // finished SUCCESSFULLY at this exact URL (tracked via its own
@@ -655,8 +711,26 @@ public final class VoiceboxViewController: UIViewController {
             return
         }
 
+        if joinedInFlightWarm {
+            // The request is already on the wire. Issuing another `load()` here would cancel
+            // it and start over, throwing away however much of it had completed — exactly the
+            // duplicated work this path exists to avoid. Just put the skeleton up and let the
+            // navigation delegate's `didFinish` take it down.
+            startLoading()
+            return
+        }
+
         let url = voiceboxView.buildURL()
         let cache = VoiceboxCache.shared
+
+        // `dataStoreWarm` distinguishes the two slow paths: a handle never opened before on
+        // a device whose asset cache IS populated should still be quick (document only),
+        // while a genuinely cold data store re-downloads the whole bundle.
+        // `afterOpen` is everything spent BEFORE the network is touched: creating the
+        // WKWebView (which spins up a WebContent process), the skeleton and close button,
+        // the mic-permission check, and the presentation animation. It is dead time that a
+        // reusable already-live WebView would remove entirely, so it needs its own number —
+        // subtracting `nav FINISH` from `open READY` only estimates it.
 
         if cache.hasCachedContent(for: voiceboxView.handle) {
             // Floating card hides the WebView until ready, so show the skeleton
@@ -673,22 +747,49 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
+    /// Uncovers the WebView. Called from whichever comes FIRST: the page's own DOM-ready
+    /// signal (`VoiceboxWebScripts.domReadyUserScript`, the normal case) or `didFinish` (the
+    /// fallback, for a page whose JS never ran).
+    ///
+    /// Waiting for `didFinish` alone cost ~400 ms of staring at a skeleton while already-
+    /// painted content sat hidden behind it — see the doc comment on `domReadyUserScript`.
+    /// One-shot, because both callers can fire and `didFinish` also runs again after in-page
+    /// navigations and web-content-process relaunches.
+    private func revealContent(documentURL: URL?) {
+        // Identity check, NOT a timing check. The hot spare arrives holding a blank document
+        // that runs this same script, and an off-screen WebView never paints — so its queued
+        // callback can fire moments AFTER adoption, once the view is finally in a hierarchy.
+        // A flag saying "our load has started" does not catch that: the stale post lands
+        // between `load()` and the new document committing, and we uncover an empty sheet
+        // (observed: revealed at 85 ms, real content 2.6 s later). Only a signal from a
+        // document that IS this handle's recorder counts.
+        if let documentURL, !VoiceboxURLBuilder.isRecorderPath(documentURL, handle: voiceboxView.handle) {
+            return
+        }
+        guard !didReveal else { return }
+        didReveal = true
+
+        if voiceboxView.theme.backgroundColor == nil {
+            // Keep the skeleton visible while JS detects the page colour.
+            // applyWebBackgroundColor() will stop it once the colour is set,
+            // so there's no white-strip flash between skeleton fade-out and colour update.
+            // Safety net: force-stop after 1 s in case detection never fires (JS error, etc.).
+            detectWebBackgroundColor()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.stopLoading()
+            }
+        } else {
+            stopLoading()
+        }
+    }
+
     private func handleLoadingState(_ isLoading: Bool) {
         if isLoading {
             startLoading()
         } else {
-            if voiceboxView.theme.backgroundColor == nil {
-                // Keep the skeleton visible while JS detects the page colour.
-                // applyWebBackgroundColor() will stop it once the colour is set,
-                // so there's no white-strip flash between skeleton fade-out and colour update.
-                // Safety net: force-stop after 1 s in case detection never fires (JS error, etc.).
-                detectWebBackgroundColor()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.stopLoading()
-                }
-            } else {
-                stopLoading()
-            }
+            // Normally a no-op by now: the page's DOM-ready signal has already revealed it.
+            // This is the fallback for a page whose scripts never ran.
+            revealContent(documentURL: webView.url)
             if voiceboxView.presentationMode == .fitContent {
                 measureContentHeight()
             }
@@ -823,9 +924,35 @@ public final class VoiceboxViewController: UIViewController {
         }
     }
 
+    /// The handle doesn't resolve server-side, so the navigation was cancelled before the
+    /// redirect target could render (see `VoiceboxNavigationDelegate`).
+    ///
+    /// Reported as a load failure rather than silently showing an empty sheet: the host app
+    /// is the only thing that can act on it — typically by removing a stale entry from
+    /// whatever list offered this handle. The sheet is left empty rather than showing the
+    /// offline view, which would wrongly blame the network.
+    private func handleUnavailableHandle(redirectedTo destination: URL) {
+        stopLoading()
+        let error = NSError(
+            domain: "com.voiceboxkit",
+            code: 404,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Voicebox @\(voiceboxView.handle) is not available. "
+                    + "The server redirected to \(destination.absoluteString).",
+                NSURLErrorFailingURLStringErrorKey: voiceboxView.buildURL().absoluteString
+            ]
+        )
+        voiceboxView.delegate?.voiceboxDidFail(voiceboxView, error: error)
+    }
+
     private func handleLoadError(_ error: Error) {
         stopLoading()
         let nsError = error as NSError
+
+        // -999 is OUR OWN cancel from the unavailable-handle guard; `handleUnavailableHandle`
+        // has already reported a far more useful error, so don't raise a second, vaguer one.
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return }
 
         voiceboxView.delegate?.voiceboxDidFail(voiceboxView, error: error)
 
@@ -952,6 +1079,14 @@ extension VoiceboxViewController: WKScriptMessageHandler {
             if let css = message.body as? String {
                 DispatchQueue.main.async { self.applyWebBackgroundColor(css) }
             }
+
+        case Self.domReadyMessageName:
+            // The recorder's DOM is parsed and styled. Everything still in flight (visualizer,
+            // ActionCable, ahoy, Bugsnag) is background machinery that changes nothing on
+            // screen, so the user should not be kept behind a skeleton waiting for it.
+            // The body carries the document's own URL — `revealContent` uses it to reject a
+            // signal from some other document this WebView previously held.
+            revealContent(documentURL: (message.body as? String).flatMap(URL.init(string:)))
 
         default:
             break

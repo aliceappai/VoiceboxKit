@@ -1,13 +1,30 @@
 import Foundation
+import WebKit
 
 /// Top-level namespace for VoiceboxKit configuration and preloading.
 public enum VoiceboxKit {
 
     /// SDK version string.
-    public static let version = "1.1.2"
+    public static let version = "1.2.0"
 
     /// Base URL for Voicebox handles. Defaults to production (`https://vbx.to`).
     public static var baseURL: String = "https://vbx.to"
+
+    /// When `true`, the SDK prints diagnostics to the console (`[VoiceboxKit][...]`).
+    ///
+    /// Defaults to `true` in DEBUG builds and `false` in release, so a shipping app is
+    /// silent without the host having to remember to turn it off. Set it explicitly to
+    /// override either way:
+    /// ```swift
+    /// VoiceboxKit.debugLogging = true
+    /// ```
+    public static var debugLogging: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+    }()
 
     // MARK: - Global Configuration
 
@@ -98,5 +115,56 @@ public enum VoiceboxKit {
     ///   - params: The exact params the sheet will be opened with. Defaults to none.
     public static func preload(handle: String, params: [String: String] = [:]) {
         VoiceboxCache.shared.preload(handle: handle, params: params)
+    }
+
+    /// Forget the anonymous recorder identity stored on this device.
+    ///
+    /// **Call this on sign-out.** Messages recorded while signed out are tied to an
+    /// anonymous session id kept in the recorder's own web storage, and that id long
+    /// outlives a session — so on a shared device the next person to sign in would
+    /// otherwise be able to claim the previous person's unclaimed recordings. vbx-web
+    /// does the equivalent when it tears a session down.
+    ///
+    /// Clears local + session storage for the recorder's origin (`baseURL`) and drops any
+    /// warmed WebViews first, since a preloaded page still holding the old id in memory
+    /// would write it straight back. Cookies and caches are left alone — this forgets who
+    /// was recording, not everything the recorder ever loaded.
+    ///
+    /// - Note: A new id is minted the next time the recorder is opened. This severs the
+    ///   link to earlier recordings; it does not stop future ones being tracked.
+    ///
+    /// - Parameter completion: Called on the main queue once storage has been removed.
+    public static func clearAnonymousSession(completion: (() -> Void)? = nil) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { clearAnonymousSession(completion: completion) }
+            return
+        }
+
+        VoiceboxCache.shared.discardWarmedWebViews()
+
+        guard let host = URL(string: baseURL)?.host, !host.isEmpty else {
+            VoiceboxLog.debug("session", "clear skipped — baseURL has no host (\(baseURL))")
+            completion?()
+            return
+        }
+
+        // Storage only. `WKWebsiteDataRecord.displayName` is the registrable domain
+        // ("vbx.to"), while baseURL's host may be a subdomain of it, so match both ways.
+        let types: Set<String> = [WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeSessionStorage]
+        let store = WKWebsiteDataStore.default()
+        store.fetchDataRecords(ofTypes: types) { records in
+            let matching = records.filter { record in
+                host == record.displayName || host.hasSuffix(".\(record.displayName)")
+            }
+            guard !matching.isEmpty else {
+                VoiceboxLog.debug("session", "clear found no stored data for \(host)")
+                DispatchQueue.main.async { completion?() }
+                return
+            }
+            store.removeData(ofTypes: types, for: matching) {
+                VoiceboxLog.debug("session", "cleared anonymous session storage for \(host)")
+                completion?()
+            }
+        }
     }
 }

@@ -189,6 +189,20 @@ final class VoiceboxCache {
         hotSpareObserver = nil
     }
 
+    /// Drops every warmed / preloaded WebView, plus the hot spare.
+    ///
+    /// Required by `VoiceboxKit.clearAnonymousSession()`, not merely tidy: a warmed
+    /// WebView holds an already-LOADED recorder document whose JavaScript still has the
+    /// old anonymous id in memory, and vbx-web's `ensureProfilesSessionId()` writes
+    /// whatever it holds back to storage the next time it runs. Emptying the data store
+    /// without dropping those pages would let one of them resurrect the very id that was
+    /// just removed.
+    func discardWarmedWebViews() {
+        preloadedWebViews.removeAll()
+        warmOrder.removeAll()
+        releaseHotSpare()
+    }
+
     // MARK: - UserDefaults Keys
 
     private func cachedKey(for handle: String) -> String {

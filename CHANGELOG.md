@@ -5,6 +5,29 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0]
+
+### Added
+
+- The recorder's anonymous session id is now reported to the host, via
+  `VoiceboxDelegate.voicebox(_:didResolveAnonymousSessionId:)` and the `onAnonymousSessionId:`
+  closure on `.voicebox(...)`. Messages recorded while signed out belong to that id and to no
+  account; handing it back at sign-in is what lets a host claim them. The id is written
+  lazily by the recorder, so it is read at document-end, again on the recorder's own
+  complete/submit events, and polled once a second (for up to two minutes) until it exists.
+- `VoiceboxKit.clearAnonymousSession()` — forget that identity. **Call it on sign-out**, or
+  the id outlives the session and a later anonymous recording on a shared device is stamped
+  with the previous person's session. Clears local + session storage for `baseURL`'s origin
+  and drops warmed WebViews first, since a preloaded page still holding the old id in memory
+  would write it straight back.
+- `VoiceboxKit.debugLogging` — console diagnostics (`[VoiceboxKit][...]`), defaulting to
+  `true` in DEBUG builds and `false` in release.
+
+### Notes
+
+- The storage key is a **cross-repo contract** with vbx-web (`profiles_session.js`). A rename
+  on either side silently stops capture, with no compile error; `SessionCaptureTests` pins it.
+
 ## [1.1.2]
 
 ### Added

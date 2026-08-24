@@ -22,6 +22,7 @@ struct VoiceboxModifier: ViewModifier {
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onAnonymousSessionId: ((String) -> Void)?
 
     /// Tracks the background colour detected from the web page.
     /// Seeded from the per-handle cache so re-opens use the correct colour immediately.
@@ -54,6 +55,7 @@ struct VoiceboxModifier: ViewModifier {
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
             onDismiss: onDismiss,
+            onAnonymousSessionId: onAnonymousSessionId,
             onBackgroundColorDetected: needsDetection ? { color in
                 // Already dispatched to main in userContentController; update inline
                 // so the presentationBackground and skeleton stop in the same pass.
@@ -119,7 +121,8 @@ struct VoiceboxModifier: ViewModifier {
         let coordinator = VoiceboxRepresentable.Coordinator(
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
-            onDismiss: onDismiss
+            onDismiss: onDismiss,
+            onAnonymousSessionId: onAnonymousSessionId
         )
         let vbView = VoiceboxView(handle: handle, params: params, theme: theme)
         vbView.presentationMode = presentationMode
@@ -219,6 +222,7 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
     var onRecordingComplete: (() -> Void)?
     var onMessageSubmitted: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onAnonymousSessionId: ((String) -> Void)?
     /// Forwarded from `VoiceboxModifier` — updates `presentationBackground` reactively.
     var onBackgroundColorDetected: ((UIColor) -> Void)?
 
@@ -226,7 +230,8 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         Coordinator(
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
-            onDismiss: onDismiss
+            onDismiss: onDismiss,
+            onAnonymousSessionId: onAnonymousSessionId
         )
     }
 
@@ -259,15 +264,18 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         var onRecordingComplete: (() -> Void)?
         var onMessageSubmitted: (() -> Void)?
         var onDismiss: (() -> Void)?
+        var onAnonymousSessionId: ((String) -> Void)?
 
         init(
             onRecordingComplete: (() -> Void)?,
             onMessageSubmitted: (() -> Void)?,
-            onDismiss: (() -> Void)?
+            onDismiss: (() -> Void)?,
+            onAnonymousSessionId: ((String) -> Void)? = nil
         ) {
             self.onRecordingComplete = onRecordingComplete
             self.onMessageSubmitted = onMessageSubmitted
             self.onDismiss = onDismiss
+            self.onAnonymousSessionId = onAnonymousSessionId
         }
 
         func voiceboxDidFinishRecording(_ voiceboxView: VoiceboxView) {
@@ -280,6 +288,10 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
 
         func voiceboxDidDismiss(_ voiceboxView: VoiceboxView) {
             onDismiss?()
+        }
+
+        func voicebox(_ voiceboxView: VoiceboxView, didResolveAnonymousSessionId sessionId: String) {
+            onAnonymousSessionId?(sessionId)
         }
     }
 }
@@ -393,7 +405,8 @@ public extension View {
         autoGrantMicPermission: Bool? = nil,
         onRecordingComplete: (() -> Void)? = nil,
         onMessageSubmitted: (() -> Void)? = nil,
-        onDismiss: (() -> Void)? = nil
+        onDismiss: (() -> Void)? = nil,
+        onAnonymousSessionId: ((String) -> Void)? = nil
     ) -> some View {
         modifier(
             VoiceboxModifier(
@@ -409,7 +422,8 @@ public extension View {
                 autoGrantMicPermission: autoGrantMicPermission,
                 onRecordingComplete: onRecordingComplete,
                 onMessageSubmitted: onMessageSubmitted,
-                onDismiss: onDismiss
+                onDismiss: onDismiss,
+                onAnonymousSessionId: onAnonymousSessionId
             )
         )
     }

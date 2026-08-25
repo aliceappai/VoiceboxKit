@@ -23,6 +23,7 @@ struct VoiceboxModifier: ViewModifier {
     var onMessageSubmitted: (() -> Void)?
     var onDismiss: (() -> Void)?
     var onAnonymousSessionId: ((String) -> Void)?
+    var onClaimToken: ((String) -> Void)?
 
     /// Tracks the background colour detected from the web page.
     /// Seeded from the per-handle cache so re-opens use the correct colour immediately.
@@ -56,6 +57,7 @@ struct VoiceboxModifier: ViewModifier {
             onMessageSubmitted: onMessageSubmitted,
             onDismiss: onDismiss,
             onAnonymousSessionId: onAnonymousSessionId,
+            onClaimToken: onClaimToken,
             onBackgroundColorDetected: needsDetection ? { color in
                 // Already dispatched to main in userContentController; update inline
                 // so the presentationBackground and skeleton stop in the same pass.
@@ -122,7 +124,8 @@ struct VoiceboxModifier: ViewModifier {
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
             onDismiss: onDismiss,
-            onAnonymousSessionId: onAnonymousSessionId
+            onAnonymousSessionId: onAnonymousSessionId,
+            onClaimToken: onClaimToken
         )
         let vbView = VoiceboxView(handle: handle, params: params, theme: theme)
         vbView.presentationMode = presentationMode
@@ -223,6 +226,7 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
     var onMessageSubmitted: (() -> Void)?
     var onDismiss: (() -> Void)?
     var onAnonymousSessionId: ((String) -> Void)?
+    var onClaimToken: ((String) -> Void)?
     /// Forwarded from `VoiceboxModifier` — updates `presentationBackground` reactively.
     var onBackgroundColorDetected: ((UIColor) -> Void)?
 
@@ -231,7 +235,8 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
             onRecordingComplete: onRecordingComplete,
             onMessageSubmitted: onMessageSubmitted,
             onDismiss: onDismiss,
-            onAnonymousSessionId: onAnonymousSessionId
+            onAnonymousSessionId: onAnonymousSessionId,
+            onClaimToken: onClaimToken
         )
     }
 
@@ -265,17 +270,20 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         var onMessageSubmitted: (() -> Void)?
         var onDismiss: (() -> Void)?
         var onAnonymousSessionId: ((String) -> Void)?
+        var onClaimToken: ((String) -> Void)?
 
         init(
             onRecordingComplete: (() -> Void)?,
             onMessageSubmitted: (() -> Void)?,
             onDismiss: (() -> Void)?,
-            onAnonymousSessionId: ((String) -> Void)? = nil
+            onAnonymousSessionId: ((String) -> Void)? = nil,
+            onClaimToken: ((String) -> Void)? = nil
         ) {
             self.onRecordingComplete = onRecordingComplete
             self.onMessageSubmitted = onMessageSubmitted
             self.onDismiss = onDismiss
             self.onAnonymousSessionId = onAnonymousSessionId
+            self.onClaimToken = onClaimToken
         }
 
         func voiceboxDidFinishRecording(_ voiceboxView: VoiceboxView) {
@@ -292,6 +300,10 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
 
         func voicebox(_ voiceboxView: VoiceboxView, didResolveAnonymousSessionId sessionId: String) {
             onAnonymousSessionId?(sessionId)
+        }
+
+        func voicebox(_ voiceboxView: VoiceboxView, didResolveClaimToken claimToken: String) {
+            onClaimToken?(claimToken)
         }
     }
 }
@@ -406,7 +418,8 @@ public extension View {
         onRecordingComplete: (() -> Void)? = nil,
         onMessageSubmitted: (() -> Void)? = nil,
         onDismiss: (() -> Void)? = nil,
-        onAnonymousSessionId: ((String) -> Void)? = nil
+        onAnonymousSessionId: ((String) -> Void)? = nil,
+        onClaimToken: ((String) -> Void)? = nil
     ) -> some View {
         modifier(
             VoiceboxModifier(
@@ -423,7 +436,8 @@ public extension View {
                 onRecordingComplete: onRecordingComplete,
                 onMessageSubmitted: onMessageSubmitted,
                 onDismiss: onDismiss,
-                onAnonymousSessionId: onAnonymousSessionId
+                onAnonymousSessionId: onAnonymousSessionId,
+                onClaimToken: onClaimToken
             )
         )
     }

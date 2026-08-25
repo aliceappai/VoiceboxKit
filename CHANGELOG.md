@@ -15,18 +15,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   account; handing it back at sign-in is what lets a host claim them. The id is written
   lazily by the recorder, so it is read at document-end, again on the recorder's own
   complete/submit events, and polled once a second (for up to two minutes) until it exists.
-- `VoiceboxKit.clearAnonymousSession()` — forget that identity. **Call it on sign-out**, or
-  the id outlives the session and a later anonymous recording on a shared device is stamped
-  with the previous person's session. Clears local + session storage for `baseURL`'s origin
-  and drops warmed WebViews first, since a preloaded page still holding the old id in memory
-  would write it straight back.
+- The recorder's one-time **claim token** is reported too, via
+  `VoiceboxDelegate.voicebox(_:didResolveClaimToken:)` and `onClaimToken:`. vbx-web renders it into
+  the "Save your messages" links after a submit; a host can send it with its sign-in call and the
+  backend attributes the messages, with no minting endpoint involved. Only appears after a message
+  is submitted, and only for a visitor with no web session — expect it not to arrive at all in the
+  common case.
+- `VoiceboxKit.clearAnonymousSession()` — forget the anonymous identity. Clears local + session
+  storage for `baseURL`'s origin, and drops warmed WebViews first, since a preloaded page still
+  holding the old id in memory would write it straight back. Useful on sign-out for a host that
+  wants a shared device to start a fresh anonymous session; it bounds how much history one claim
+  can cover, but it is **not** on its own a defence against another account claiming those
+  recordings — that protection lives server-side, where a claim only ever touches messages nobody
+  owns yet.
 - `VoiceboxKit.debugLogging` — console diagnostics (`[VoiceboxKit][...]`), defaulting to
   `true` in DEBUG builds and `false` in release.
 
 ### Notes
 
-- The storage key is a **cross-repo contract** with vbx-web (`profiles_session.js`). A rename
-  on either side silently stops capture, with no compile error; `SessionCaptureTests` pins it.
+- The storage key AND the claim-link selector are **cross-repo contracts** with vbx-web
+  (`profiles_session.js`, `recorder/_claim_bar.html.erb`). A rename on either side silently stops
+  capture, with no compile error on either; `SessionCaptureTests` pins both.
+- The claim token is a live, single-use capability. It is logged by length only, never in full.
 
 ## [1.1.2]
 

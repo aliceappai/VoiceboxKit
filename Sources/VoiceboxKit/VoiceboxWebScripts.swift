@@ -156,57 +156,75 @@ enum VoiceboxWebScripts {
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
-    /// Reports the recorder's anonymous session id (`vbx_profiles_session_id`) to native.
+    /// Reports two things about the recorder to native: the anonymous session id, and the
+    /// one-time claim token the page renders after a recording is submitted.
     ///
-    /// Why the host wants it: messages recorded while signed out are attributed to this id
-    /// and to no account. The host can hand it back at sign-in so the backend attaches
-    /// them to the new account — otherwise they stay anonymous forever.
+    /// Why the host wants them: messages recorded while signed out are attributed to the
+    /// session id and to no account. The CLAIM TOKEN is what turns that into an account's
+    /// messages — the host sends it with its sign-in call and the backend does the rest.
     ///
-    /// Three ways in, because the id is written LAZILY. A first-time visitor has no id
-    /// when the page loads; vbx-web's `ensureProfilesSessionId()` creates it while the
-    /// recording is being submitted:
+    /// Both are read from the live page rather than derived, because both are produced by
+    /// vbx-web and neither is knowable from here:
     ///
-    /// 1. Once at document-end — covers anyone who has recorded on this device before.
-    /// 2. On the recorder's own complete/submit events — the moment it is most likely to
-    ///    have just been created.
-    /// 3. A 1s poll, up to two minutes, that stops as soon as an id exists. This is the
-    ///    one that actually catches a first-time recorder: the events above can fire on a
-    ///    button CLICK, fractionally before the page writes the id.
+    /// - **Session id** — `localStorage` under `profilesSessionStorageKey`. Written lazily:
+    ///   a first-time visitor has none until the recorder's controller connects.
+    /// - **Claim token** — the `claim_token` query param on the "Save your messages" links
+    ///   inside `#post-message-cards`. That block is empty until a message is submitted,
+    ///   at which point vbx-web fills it via Turbo Stream. It carries a token only for a
+    ///   signed-OUT visitor; signed in, the same bar links to voicebox creation instead.
     ///
-    /// Posts at most once per distinct value per frame. `forMainFrameOnly: false` matches
-    /// `eventUserScript` so an embedded recorder is covered too — which means two frames
-    /// can report the same id, and the receiver dedupes.
+    /// A single poll drives both (1s, up to two minutes, stopping once both exist), on top
+    /// of a read at document-end and one on the recorder's own events. The token cannot
+    /// appear before a recording, so the poll is what catches it.
+    ///
+    /// Posts each distinct value once per frame. `forMainFrameOnly: false` matches
+    /// `eventUserScript`, so two frames can report the same value — the receiver dedupes.
     private static func sessionUserScript() -> WKUserScript {
         let source = """
         (function() {
             var KEY = '\(profilesSessionStorageKey)';
-            var lastPosted = null;
+            var lastSessionId = null;
+            var lastClaimToken = null;
 
-            function read() {
+            function readSessionId() {
                 try {
                     return window.localStorage.getItem(KEY)
                         || window.sessionStorage.getItem(KEY);
                 } catch (e) { return null; }
             }
 
-            // Returns whether an id EXISTS (not whether it was posted) — the poll below
-            // stops on existence, so an already-posted id still ends it.
-            function post(reason) {
-                var id = read();
-                if (!id) { return false; }
-                if (id === lastPosted) { return true; }
-                lastPosted = id;
+            // The post-recording cards carry the token on their hrefs. Read from the DOM
+            // because it is minted server-side at render; there is no other copy of it.
+            function readClaimToken() {
                 try {
-                    var mh = window.webkit && window.webkit.messageHandlers;
-                    if (mh && mh.\(sessionMessageName)) {
-                        mh.\(sessionMessageName).postMessage({
-                            sessionId: id,
-                            reason: reason,
-                            url: String(window.location.href)
-                        });
+                    var links = document.querySelectorAll('#post-message-cards a[href*="claim_token="]');
+                    for (var i = 0; i < links.length; i++) {
+                        var match = String(links[i].getAttribute('href') || '')
+                            .match(/[?&]claim_token=([^&#]+)/);
+                        if (match) { return decodeURIComponent(match[1]); }
                     }
                 } catch (e) {}
-                return true;
+                return null;
+            }
+
+            // Returns whether BOTH exist, which is what ends the poll — an already-posted
+            // value still counts, so a repeat read does not keep it running.
+            function post(reason) {
+                var id = readSessionId();
+                var token = readClaimToken();
+                var payload = { reason: reason, url: String(window.location.href) };
+                var hasNews = false;
+
+                if (id && id !== lastSessionId) { lastSessionId = id; payload.sessionId = id; hasNews = true; }
+                if (token && token !== lastClaimToken) { lastClaimToken = token; payload.claimToken = token; hasNews = true; }
+
+                if (hasNews) {
+                    try {
+                        var mh = window.webkit && window.webkit.messageHandlers;
+                        if (mh && mh.\(sessionMessageName)) { mh.\(sessionMessageName).postMessage(payload); }
+                    } catch (e) {}
+                }
+                return !!(id && token);
             }
 
             // Let eventUserScript trigger a read the instant the recorder reports
@@ -217,7 +235,7 @@ enum VoiceboxWebScripts {
                 var tries = 0;
                 var timer = setInterval(function() {
                     tries += 1;
-                    // 120 x 1s: the recorder's own hard limit is two minutes, so an id
+                    // 120 x 1s: the recorder's own hard limit is two minutes, so anything
                     // that has not appeared by then is not going to.
                     if (post('poll') || tries >= 120) { clearInterval(timer); }
                 }, 1000);

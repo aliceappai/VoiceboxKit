@@ -59,10 +59,11 @@ public final class VoiceboxViewController: UIViewController {
     private static let domReadyMessageName = VoiceboxWebScripts.domReadyMessageName
     private static let sessionMessageName = VoiceboxWebScripts.sessionMessageName
 
-    /// Last anonymous session id forwarded to the delegate. The script posts at most once
-    /// per value PER FRAME, and it runs in subframes too, so without this an embedded
-    /// recorder reports the same id twice.
+    /// Last values forwarded to the delegate. The script posts at most once per value PER
+    /// FRAME, and it runs in subframes too, so without these an embedded recorder reports
+    /// the same values twice.
     private var lastReportedSessionId: String?
+    private var lastReportedClaimToken: String?
 
     /// Called on the main thread when JS detects the web page's background colour.
     /// The SwiftUI layer uses this to update `presentationBackground` dynamically
@@ -1104,31 +1105,42 @@ extension VoiceboxViewController: WKScriptMessageHandler {
         }
     }
 
-    /// Forwards the recorder's anonymous session id to the delegate, once per distinct
-    /// value. See `VoiceboxWebScripts.sessionUserScript` for where it comes from and why
-    /// it can arrive late (or repeatedly, or not at all).
+    /// Forwards the recorder's session id and claim token to the delegate, once per
+    /// distinct value each. One message can carry either or both. See
+    /// `VoiceboxWebScripts.sessionUserScript` for where they come from and why they arrive
+    /// late (or repeatedly, or not at all).
     private func handleSessionMessage(_ body: Any) {
-        guard let payload = body as? [String: Any],
-              let sessionId = (payload["sessionId"] as? String)?
-                  .trimmingCharacters(in: .whitespacesAndNewlines),
-              !sessionId.isEmpty else {
+        guard let payload = body as? [String: Any] else {
             VoiceboxLog.debug("session", "ignored malformed payload: \(body)")
             return
         }
-
         let reason = payload["reason"] as? String ?? "unknown"
-        guard sessionId != lastReportedSessionId else {
-            VoiceboxLog.debug("session", "duplicate id via \(reason), not forwarding")
-            return
-        }
-        lastReportedSessionId = sessionId
 
-        if voiceboxView.delegate == nil {
-            VoiceboxLog.debug("session", "resolved \(sessionId) via \(reason), but NO delegate is set")
-        } else {
-            VoiceboxLog.debug("session", "resolved \(sessionId) via \(reason) -> delegate")
+        if let sessionId = trimmedString(payload["sessionId"]), sessionId != lastReportedSessionId {
+            lastReportedSessionId = sessionId
+            VoiceboxLog.debug("session", "session id \(sessionId) via \(reason)\(delegateSuffix)")
+            voiceboxView.delegate?.voicebox(voiceboxView, didResolveAnonymousSessionId: sessionId)
         }
-        voiceboxView.delegate?.voicebox(voiceboxView, didResolveAnonymousSessionId: sessionId)
+
+        if let claimToken = trimmedString(payload["claimToken"]), claimToken != lastReportedClaimToken {
+            lastReportedClaimToken = claimToken
+            // Deliberately NOT logged in full: unlike the session id, this token is a live
+            // capability over someone's recordings for as long as it lasts.
+            VoiceboxLog.debug("session", "claim token (\(claimToken.count) chars) via \(reason)\(delegateSuffix)")
+            voiceboxView.delegate?.voicebox(voiceboxView, didResolveClaimToken: claimToken)
+        }
+    }
+
+    private func trimmedString(_ value: Any?) -> String? {
+        guard let string = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !string.isEmpty else { return nil }
+        return string
+    }
+
+    /// The diagnostic that matters most when a host says "nothing arrives": it separates
+    /// "the page never produced one" from "we read it and nobody was listening".
+    private var delegateSuffix: String {
+        voiceboxView.delegate == nil ? ", but NO delegate is set" : " -> delegate"
     }
 }
 

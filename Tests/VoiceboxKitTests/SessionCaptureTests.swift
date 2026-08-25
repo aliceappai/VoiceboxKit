@@ -77,6 +77,35 @@ final class SessionCaptureTests: XCTestCase {
         delegate.voicebox(view, didResolveAnonymousSessionId: "abc-123")
     }
 
+    // MARK: - Claim token
+
+    /// The token is minted server-side into the post-recording links, so the only place to
+    /// read it is the DOM. This pins the selector and the param name — vbx-web owns both.
+    func testSessionScriptReadsTheClaimTokenFromThePostMessageCards() {
+        let scripts = VoiceboxWebScripts.makeConfiguration().userContentController.userScripts
+        let source = scripts.first { $0.source.contains(VoiceboxWebScripts.profilesSessionStorageKey) }?.source ?? ""
+        XCTAssertTrue(source.contains("#post-message-cards"),
+                      "the token lives on the links vbx-web fills in after a submit")
+        XCTAssertTrue(source.contains("claim_token"))
+    }
+
+    /// The token cannot exist before a recording is submitted, so a script that stopped
+    /// polling once the session id turned up would never see it.
+    func testPollingContinuesUntilBothValuesExist() {
+        let scripts = VoiceboxWebScripts.makeConfiguration().userContentController.userScripts
+        let source = scripts.first { $0.source.contains(VoiceboxWebScripts.profilesSessionStorageKey) }?.source ?? ""
+        XCTAssertTrue(source.contains("return !!(id && token);"),
+                      "the poll must only stop once BOTH the id and the token exist")
+    }
+
+    /// Both delegate methods are optional, so existing conformers keep compiling.
+    func testClaimTokenDelegateMethodIsOptional() {
+        final class MinimalDelegate: VoiceboxDelegate {}
+        let delegate = MinimalDelegate()
+        let view = VoiceboxView(handle: "test")
+        delegate.voicebox(view, didResolveClaimToken: "tok-123")
+    }
+
     // MARK: - Clearing (sign-out)
 
     /// The completion always runs, including on the "nothing stored" path — a caller

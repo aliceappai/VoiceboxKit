@@ -119,11 +119,14 @@ public enum VoiceboxKit {
 
     /// Forget the anonymous recorder identity stored on this device.
     ///
-    /// **Call this on sign-out.** Messages recorded while signed out are tied to an
-    /// anonymous session id kept in the recorder's own web storage, and that id long
-    /// outlives a session — so on a shared device the next person to sign in would
-    /// otherwise be able to claim the previous person's unclaimed recordings. vbx-web
-    /// does the equivalent when it tears a session down.
+    /// Worth calling on sign-out. Messages recorded while signed out are tied to an anonymous
+    /// session id kept in the recorder's own web storage, and that id long outlives a session,
+    /// so on a shared device everything recorded since the last sign-out accumulates under one
+    /// identity. Clearing bounds that: a later claim can only ever cover recordings made since.
+    ///
+    /// It is **not** on its own a defence against the wrong account claiming those recordings —
+    /// that protection is server-side, where a claim only touches messages nobody owns yet.
+    /// vbx-web does the equivalent when it tears a session down.
     ///
     /// Clears local + session storage for the recorder's origin (`baseURL`) and drops any
     /// warmed WebViews first, since a preloaded page still holding the old id in memory

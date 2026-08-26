@@ -14,29 +14,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closure on `.voicebox(...)`. Messages recorded while signed out belong to that id and to no
   account; handing it back at sign-in is what lets a host claim them. The id is written
   lazily by the recorder, so it is read at document-end, again on the recorder's own
-  complete/submit events, and polled once a second (for up to two minutes) until it exists.
-- The recorder's one-time **claim token** is reported too, via
-  `VoiceboxDelegate.voicebox(_:didResolveClaimToken:)` and `onClaimToken:`. vbx-web renders it into
-  the "Save your messages" links after a submit; a host can send it with its sign-in call and the
-  backend attributes the messages, with no minting endpoint involved. Only appears after a message
-  is submitted, and only for a visitor with no web session — expect it not to arrive at all in the
-  common case.
-- `VoiceboxKit.clearAnonymousSession()` — forget the anonymous identity. Clears local + session
-  storage for `baseURL`'s origin, and drops warmed WebViews first, since a preloaded page still
-  holding the old id in memory would write it straight back. Useful on sign-out for a host that
-  wants a shared device to start a fresh anonymous session; it bounds how much history one claim
-  can cover, but it is **not** on its own a defence against another account claiming those
-  recordings — that protection lives server-side, where a claim only ever touches messages nobody
-  owns yet.
+  complete/submit events, and polled once a second (up to two minutes) until it exists.
+- `VoiceboxKit.establishSession(from:)` — sign the recorder's web view in with a URL the host
+  obtained from its own backend. The recorder runs on a different host from a host app's API,
+  with its own cookie, so a natively signed-in user otherwise reaches it signed OUT and
+  everything they record is anonymous. **The SDK does not mint this URL, calls no Voicebox
+  API, and never handles credentials** — it navigates to what it is given, in the recorder's
+  storage context, and reports whether it arrived. Call it once per session, not per recorder
+  open: the cookie is shared by every web view in the app. Treat failure as unimportant and
+  never block the recorder on it — an unattributed recording is still captured, and can be
+  claimed afterwards.
+- `VoiceboxKit.clearSession()` — forget who was recording on this device. Clears **both**
+  halves together, because a host that did one and forgot the other leaves the device in a
+  state neither describes: the session cookie for `baseURL`'s origin, and the anonymous
+  session id in local + session storage. Clearing the id is **not** on its own a defence
+  against the wrong account claiming those recordings — that protection is server-side, where
+  a claim only touches messages nobody owns yet — it bounds how much history one claim covers.
 - `VoiceboxKit.debugLogging` — console diagnostics (`[VoiceboxKit][...]`), defaulting to
   `true` in DEBUG builds and `false` in release.
 
 ### Notes
 
-- The storage key AND the claim-link selector are **cross-repo contracts** with vbx-web
-  (`profiles_session.js`, `recorder/_claim_bar.html.erb`). A rename on either side silently stops
-  capture, with no compile error on either; `SessionCaptureTests` pins both.
-- The claim token is a live, single-use capability. It is logged by length only, never in full.
+- Both session methods **drop and re-warm** the preloaded WebViews, and the order differs on
+  purpose. Establishing warms afterwards, so the new pages carry the new cookie; clearing
+  drops first, because a warmed page still holding the old id in memory writes it straight
+  back into the store being emptied. Re-warming is the SDK's job rather than the host's —
+  only the cache knows what is in the pool.
+- Priming runs in a **separate off-screen WebView**, not as the recorder's first navigation.
+  The recorder's navigation delegate cancels any pre-first-load navigation that is not its
+  own handle's page (the guard that stops an unknown handle rendering the public directory
+  inside a recorder sheet), and a session URL trips it.
+- The storage key is a **cross-repo contract** with vbx-web (`profiles_session.js`). A rename
+  on either side silently stops capture, with no compile error on either; `SessionCaptureTests`
+  pins the literal.
 
 ## [1.1.2]
 

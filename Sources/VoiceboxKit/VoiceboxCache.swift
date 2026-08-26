@@ -75,6 +75,13 @@ final class VoiceboxCache {
     /// Preloaded WebViews keyed by handle, ready for immediate display.
     private var preloadedWebViews: [String: PreloadedEntry] = [:]
 
+    /// The params each handle was last warmed with, so ``resetWarmedWebViews()`` can put the
+    /// pool back exactly as it found it. Kept separately from ``preloadedWebViews`` because
+    /// that entry stores only the built URL, and picking params back out of a URL means
+    /// re-deriving what ``VoiceboxURLBuilder`` merged in (app context, UTM tags) — a guess
+    /// that would silently warm a different URL than the sheet later asks for.
+    private var warmParams: [String: [String: String]] = [:]
+
     /// Handles in warm order, oldest first — the eviction order for ``maxWarmedWebViews``.
     /// A plain array (not an ordered dictionary) because this holds a handful of entries
     /// at most and every operation here is already O(n) over that handful.
@@ -189,18 +196,33 @@ final class VoiceboxCache {
         hotSpareObserver = nil
     }
 
-    /// Drops every warmed / preloaded WebView, plus the hot spare.
+    /// Drops every warmed / preloaded WebView and the hot spare, then warms the same
+    /// handles again from scratch.
     ///
-    /// Required by `VoiceboxKit.clearAnonymousSession()`, not merely tidy: a warmed
-    /// WebView holds an already-LOADED recorder document whose JavaScript still has the
-    /// old anonymous id in memory, and vbx-web's `ensureProfilesSessionId()` writes
-    /// whatever it holds back to storage the next time it runs. Emptying the data store
-    /// without dropping those pages would let one of them resurrect the very id that was
-    /// just removed.
-    func discardWarmedWebViews() {
+    /// Called by both session methods on ``VoiceboxKit``, and the dropping half is
+    /// required rather than tidy: a warmed WebView holds an already-LOADED recorder
+    /// document. Its JavaScript still has the old anonymous id in memory, and vbx-web's
+    /// `ensureProfilesSessionId()` writes whatever it holds back to storage the next time
+    /// it runs — so emptying the data store without dropping those pages lets one of them
+    /// resurrect the id that was just removed. A page loaded before a session was
+    /// established is stale in the same way: it rendered signed-out and will keep saying so.
+    ///
+    /// Re-warming is deliberately NOT the host's job. The pool is an SDK internal — only
+    /// this class knows what is in it — so a host asked to replay its own preloads would
+    /// have to track them separately and remember to do it, a contract that is silently
+    /// wrong the first time somebody forgets. Warming is best-effort anyway: a miss just
+    /// falls back to a normal load.
+    func resetWarmedWebViews() {
+        let toRewarm = warmParams
+
         preloadedWebViews.removeAll()
         warmOrder.removeAll()
+        warmParams.removeAll()
         releaseHotSpare()
+
+        for (handle, params) in toRewarm {
+            preload(handle: handle, params: params)
+        }
     }
 
     // MARK: - UserDefaults Keys
@@ -277,6 +299,11 @@ final class VoiceboxCache {
         }
         preloadedWebViews.removeValue(forKey: handle)
         warmOrder.removeAll { $0 == handle }
+        // Also drop the warm PARAMS: this handle is being adopted for display, so it is no
+        // longer part of the pool, and ``resetWarmedWebViews()`` restoring it would warm a
+        // second copy of a page that is already on screen. The host re-preloads on its next
+        // appear, as it does today.
+        warmParams.removeValue(forKey: handle)
         // Start warming a replacement in the background
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.warmWebViewCache(handle: handle, url: url)
@@ -290,6 +317,16 @@ final class VoiceboxCache {
     /// hand the WebView out).
     func hasPreloadedWebView(for handle: String) -> Bool {
         preloadedWebViews[handle]?.isReady == true
+    }
+
+    /// Whether a warm for `handle` exists at all — in flight OR ready.
+    ///
+    /// Distinct from ``hasPreloadedWebView(for:)``, which answers "is one ready to adopt".
+    /// The difference matters right after ``resetWarmedWebViews()``: the replacements have
+    /// been started but none has finished loading, so the ready check says no while the
+    /// pool is in fact being rebuilt.
+    func isWarming(handle: String) -> Bool {
+        preloadedWebViews[handle] != nil
     }
 
     // MARK: - Preload
@@ -317,6 +354,7 @@ final class VoiceboxCache {
             // memory — an unpredicted open (Directory pin/card) can then skip process launch.
             self.hasBeenUsed = true
             self.prepareHotSpareIfNeeded()
+            self.warmParams[handle] = params
             if let existing = self.preloadedWebViews[handle], existing.url == url {
                 // Not a problem — this is the dedupe doing its job when a screen warms on
                 // appear AND on foreground AND on prompt change. Logged so a "why didn't my
@@ -381,6 +419,7 @@ final class VoiceboxCache {
         while warmOrder.count > Self.maxWarmedWebViews {
             let oldest = warmOrder.removeFirst()
             preloadedWebViews.removeValue(forKey: oldest)
+            warmParams.removeValue(forKey: oldest)
         }
     }
 }

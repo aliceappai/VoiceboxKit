@@ -59,11 +59,10 @@ public final class VoiceboxViewController: UIViewController {
     private static let domReadyMessageName = VoiceboxWebScripts.domReadyMessageName
     private static let sessionMessageName = VoiceboxWebScripts.sessionMessageName
 
-    /// Last values forwarded to the delegate. The script posts at most once per value PER
-    /// FRAME, and it runs in subframes too, so without these an embedded recorder reports
-    /// the same values twice.
+    /// Last id forwarded to the delegate. The script posts at most once per value PER
+    /// FRAME, and it runs in subframes too, so without this an embedded recorder reports
+    /// the same id twice.
     private var lastReportedSessionId: String?
-    private var lastReportedClaimToken: String?
 
     /// Called on the main thread when JS detects the web page's background colour.
     /// The SwiftUI layer uses this to update `presentationBackground` dynamically
@@ -1105,10 +1104,9 @@ extension VoiceboxViewController: WKScriptMessageHandler {
         }
     }
 
-    /// Forwards the recorder's session id and claim token to the delegate, once per
-    /// distinct value each. One message can carry either or both. See
-    /// `VoiceboxWebScripts.sessionUserScript` for where they come from and why they arrive
-    /// late (or repeatedly, or not at all).
+    /// Forwards the recorder's anonymous session id to the delegate, once per distinct
+    /// value. See `VoiceboxWebScripts.sessionUserScript` for where it comes from and why
+    /// it arrives late (or repeatedly, or not at all).
     private func handleSessionMessage(_ body: Any) {
         guard let payload = body as? [String: Any] else {
             VoiceboxLog.debug("session", "ignored malformed payload: \(body)")
@@ -1120,14 +1118,6 @@ extension VoiceboxViewController: WKScriptMessageHandler {
             lastReportedSessionId = sessionId
             VoiceboxLog.debug("session", "session id \(sessionId) via \(reason)\(delegateSuffix)")
             voiceboxView.delegate?.voicebox(voiceboxView, didResolveAnonymousSessionId: sessionId)
-        }
-
-        if let claimToken = trimmedString(payload["claimToken"]), claimToken != lastReportedClaimToken {
-            lastReportedClaimToken = claimToken
-            // Deliberately NOT logged in full: unlike the session id, this token is a live
-            // capability over someone's recordings for as long as it lasts.
-            VoiceboxLog.debug("session", "claim token (\(claimToken.count) chars) via \(reason)\(delegateSuffix)")
-            voiceboxView.delegate?.voicebox(voiceboxView, didResolveClaimToken: claimToken)
         }
     }
 

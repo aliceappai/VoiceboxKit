@@ -117,33 +117,84 @@ public enum VoiceboxKit {
         VoiceboxCache.shared.preload(handle: handle, params: params)
     }
 
-    /// Forget the anonymous recorder identity stored on this device.
+    // MARK: - Recorder session
+
+    /// Sign the recorder's web view in, using a URL your app obtained from its own backend.
     ///
-    /// Worth calling on sign-out. Messages recorded while signed out are tied to an anonymous
-    /// session id kept in the recorder's own web storage, and that id long outlives a session,
-    /// so on a shared device everything recorded since the last sign-out accumulates under one
-    /// identity. Clearing bounds that: a later claim can only ever cover recordings made since.
+    /// The recorder runs on a different host from your app's API, with its own cookie, so
+    /// a natively signed-in user still reaches it signed OUT — and everything they record
+    /// is anonymous. Loading a session URL here fixes that: messages are then attributed
+    /// as they are submitted.
     ///
-    /// It is **not** on its own a defence against the wrong account claiming those recordings —
-    /// that protection is server-side, where a claim only touches messages nobody owns yet.
-    /// vbx-web does the equivalent when it tears a session down.
+    /// **VoiceboxKit does not mint this URL, does not call any Voicebox API, and never
+    /// handles credentials.** It navigates to what you give it, in the storage context the
+    /// recorder uses, and reports whether it arrived. Most integrations never need this —
+    /// it is for a host whose users have Voicebox accounts.
     ///
-    /// Clears local + session storage for the recorder's origin (`baseURL`) and drops any
-    /// warmed WebViews first, since a preloaded page still holding the old id in memory
-    /// would write it straight back. Cookies and caches are left alone — this forgets who
-    /// was recording, not everything the recorder ever loaded.
+    /// Call it once per session, not per recorder open: the cookie is shared by every web
+    /// view in the app, so one call covers every voicebox opened afterwards. Sensible
+    /// moments are app launch when already signed in, straight after your own sign-in, and
+    /// a foreground return when the session may have lapsed.
     ///
-    /// - Note: A new id is minted the next time the recorder is opened. This severs the
-    ///   link to earlier recordings; it does not stop future ones being tracked.
+    /// **Treat failure as unimportant.** Do not block opening the recorder on it and do not
+    /// show an error: a recording made without a session is still captured, just anonymously,
+    /// and can be claimed afterwards. Blocking trades a working recorder for a spinner.
     ///
-    /// - Parameter completion: Called on the main queue once storage has been removed.
-    public static func clearAnonymousSession(completion: (() -> Void)? = nil) {
+    /// Warmed WebViews are dropped and re-warmed around the load, since a page warmed before
+    /// this rendered signed-out and would keep saying so.
+    ///
+    /// - Parameters:
+    ///   - url: The session URL from your backend.
+    ///   - completion: Called on the main queue with whether the load succeeded.
+    public static func establishSession(from url: URL, completion: ((Bool) -> Void)? = nil) {
         guard Thread.isMainThread else {
-            DispatchQueue.main.async { clearAnonymousSession(completion: completion) }
+            DispatchQueue.main.async { establishSession(from: url, completion: completion) }
             return
         }
 
-        VoiceboxCache.shared.discardWarmedWebViews()
+        VoiceboxLog.debug("session", "establishing session via \(url.host ?? "?")\(url.path)")
+        SessionPrimer.shared.load(url) { success in
+            VoiceboxLog.debug("session", "establish \(success ? "succeeded" : "failed")")
+            // AFTER the load, so the pages that come back are warmed against the new cookie.
+            VoiceboxCache.shared.resetWarmedWebViews()
+            completion?(success)
+        }
+    }
+
+    /// Forget who was recording on this device. Call it on sign-out.
+    ///
+    /// Clears both halves of the recorder's identity, because a host that did one and
+    /// forgot the other would leave the device in a state neither of them describes:
+    ///
+    /// - the **session cookie** for `baseURL`'s origin, so the recorder stops being signed
+    ///   in as the account that just left;
+    /// - the **anonymous session id** in local + session storage, which outlives any
+    ///   session and would otherwise keep accumulating every recording made on this device
+    ///   under one identity.
+    ///
+    /// Clearing the id is **not** on its own a defence against the wrong account claiming
+    /// those recordings — that protection is server-side, where a claim only ever touches
+    /// messages nobody owns yet. What it does is bound how much history one claim can
+    /// cover. vbx-web does the equivalent when it tears a session down.
+    ///
+    /// Caches are left alone: this forgets who was recording, not everything the recorder
+    /// ever loaded. Warmed WebViews are dropped and re-warmed, since a preloaded page still
+    /// holding the old id in memory writes it straight back on its next
+    /// `ensureProfilesSessionId()`.
+    ///
+    /// - Note: A new anonymous id is minted the next time the recorder opens. This severs
+    ///   the link to earlier recordings; it does not stop future ones being tracked.
+    ///
+    /// - Parameter completion: Called on the main queue once the data has been removed.
+    public static func clearSession(completion: (() -> Void)? = nil) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { clearSession(completion: completion) }
+            return
+        }
+
+        // Before the removal, not after: a warmed page holding the old id in memory is
+        // exactly what would write it back into the store we are about to empty.
+        VoiceboxCache.shared.resetWarmedWebViews()
 
         guard let host = URL(string: baseURL)?.host, !host.isEmpty else {
             VoiceboxLog.debug("session", "clear skipped — baseURL has no host (\(baseURL))")
@@ -151,9 +202,13 @@ public enum VoiceboxKit {
             return
         }
 
-        // Storage only. `WKWebsiteDataRecord.displayName` is the registrable domain
-        // ("vbx.to"), while baseURL's host may be a subdomain of it, so match both ways.
-        let types: Set<String> = [WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeSessionStorage]
+        // `WKWebsiteDataRecord.displayName` is the registrable domain ("vbx.to"), while
+        // baseURL's host may be a subdomain of it, so match both ways.
+        let types: Set<String> = [
+            WKWebsiteDataTypeLocalStorage,
+            WKWebsiteDataTypeSessionStorage,
+            WKWebsiteDataTypeCookies
+        ]
         let store = WKWebsiteDataStore.default()
         store.fetchDataRecords(ofTypes: types) { records in
             let matching = records.filter { record in
@@ -165,7 +220,7 @@ public enum VoiceboxKit {
                 return
             }
             store.removeData(ofTypes: types, for: matching) {
-                VoiceboxLog.debug("session", "cleared anonymous session storage for \(host)")
+                VoiceboxLog.debug("session", "cleared recorder session + storage for \(host)")
                 completion?()
             }
         }

@@ -169,7 +169,8 @@ vb.present(from: viewController)
     handle: "alice-feedback",
     onRecordingComplete: { print("Recording saved") },
     onMessageSubmitted: { print("Message sent") },
-    onDismiss: { print("Dismissed") }
+    onDismiss: { print("Dismissed") },
+    onAnonymousSessionId: { id in print("Anonymous session: \(id)") }
 )
 ```
 
@@ -185,9 +186,57 @@ func voiceboxDidFinishRecording(_ voiceboxView: VoiceboxView) { }
 func voiceboxDidSubmitMessage(_ voiceboxView: VoiceboxView) { }
 func voiceboxDidDismiss(_ voiceboxView: VoiceboxView) { }
 func voiceboxDidFail(_ voiceboxView: VoiceboxView, error: Error) { }
+func voicebox(_ voiceboxView: VoiceboxView, didResolveAnonymousSessionId id: String) { }
 ```
 
 All delegate methods are optional.
+
+`didResolveAnonymousSessionId` reports the id that recordings made **while signed out**
+belong to. It arrives only when the recorder produces one, which can be a second or two
+after the sheet opens — and for a signed-in recorder (see **Sessions** below) it does not
+arrive at all, because those recordings are attributed as they are submitted. Store it and
+expect repeats; the same device reports the same id every time.
+
+## Sessions
+
+The recorder runs on its own host with its own cookie, so it does not know about a user
+who is signed in to *your* app. Left alone, everything they record is anonymous.
+
+```swift
+// Once per session, after your own sign-in — not per recorder open.
+VoiceboxKit.establishSession(from: url) { ok in
+    print(ok ? "recorder signed in" : "still anonymous")
+}
+```
+
+`url` comes from **your** backend. VoiceboxKit does not mint it, calls no Voicebox API and
+never handles a credential — it loads what you give it in the recorder's storage context
+and reports whether it arrived. Only a server can set a session cookie, so the navigation
+is not avoidable.
+
+**Treat failure as unimportant.** Never block the recorder on it: an unattributed recording
+is still captured, and can be attributed afterwards using the anonymous session id (see
+**Lifecycle Callbacks**).
+
+### Signing out
+
+```swift
+VoiceboxKit.clearSession()
+```
+
+Clears **both** halves together — the session cookie and the anonymous session id. They are
+one call on purpose: doing one and forgetting the other leaves the device either still
+signed in as the account that just left, or signed out but still accumulating recordings
+under the previous identity.
+
+## Debug Logging
+
+```swift
+VoiceboxKit.debugLogging = true
+```
+
+Prints `[VoiceboxKit][…]` diagnostics to the console. On in `DEBUG` builds and off in
+release by default, so a shipping app is quiet without you remembering to turn it off.
 
 ## Preloading
 

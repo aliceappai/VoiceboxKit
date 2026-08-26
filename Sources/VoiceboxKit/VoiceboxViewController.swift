@@ -57,6 +57,12 @@ public final class VoiceboxViewController: UIViewController {
     private static let voiceboxEventMessageName = VoiceboxWebScripts.eventMessageName
     private static let bgColorMessageName = VoiceboxWebScripts.bgColorMessageName
     private static let domReadyMessageName = VoiceboxWebScripts.domReadyMessageName
+    private static let sessionMessageName = VoiceboxWebScripts.sessionMessageName
+
+    /// Last id forwarded to the delegate. The script posts at most once per value PER
+    /// FRAME, and it runs in subframes too, so without this an embedded recorder reports
+    /// the same id twice.
+    private var lastReportedSessionId: String?
 
     /// Called on the main thread when JS detects the web page's background colour.
     /// The SwiftUI layer uses this to update `presentationBackground` dynamically
@@ -281,6 +287,7 @@ public final class VoiceboxViewController: UIViewController {
         webView.configuration.userContentController.add(self, name: Self.voiceboxEventMessageName)
         webView.configuration.userContentController.add(self, name: Self.bgColorMessageName)
         webView.configuration.userContentController.add(self, name: Self.domReadyMessageName)
+        webView.configuration.userContentController.add(self, name: Self.sessionMessageName)
 
         // For fitContent mode, register message handler to receive content height
         if voiceboxView.presentationMode == .fitContent {
@@ -306,6 +313,7 @@ public final class VoiceboxViewController: UIViewController {
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.voiceboxEventMessageName)
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.bgColorMessageName)
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.domReadyMessageName)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.sessionMessageName)
         if registeredContentHeightHandler {
             webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.contentHeightMessageName)
         }
@@ -1088,9 +1096,41 @@ extension VoiceboxViewController: WKScriptMessageHandler {
             // signal from some other document this WebView previously held.
             revealContent(documentURL: (message.body as? String).flatMap(URL.init(string:)))
 
+        case Self.sessionMessageName:
+            handleSessionMessage(message.body)
+
         default:
             break
         }
+    }
+
+    /// Forwards the recorder's anonymous session id to the delegate, once per distinct
+    /// value. See `VoiceboxWebScripts.sessionUserScript` for where it comes from and why
+    /// it arrives late (or repeatedly, or not at all).
+    private func handleSessionMessage(_ body: Any) {
+        guard let payload = body as? [String: Any] else {
+            VoiceboxLog.debug("session", "ignored malformed payload: \(body)")
+            return
+        }
+        let reason = payload["reason"] as? String ?? "unknown"
+
+        if let sessionId = trimmedString(payload["sessionId"]), sessionId != lastReportedSessionId {
+            lastReportedSessionId = sessionId
+            VoiceboxLog.debug("session", "session id \(sessionId) via \(reason)\(delegateSuffix)")
+            voiceboxView.delegate?.voicebox(voiceboxView, didResolveAnonymousSessionId: sessionId)
+        }
+    }
+
+    private func trimmedString(_ value: Any?) -> String? {
+        guard let string = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !string.isEmpty else { return nil }
+        return string
+    }
+
+    /// The diagnostic that matters most when a host says "nothing arrives": it separates
+    /// "the page never produced one" from "we read it and nobody was listening".
+    private var delegateSuffix: String {
+        voiceboxView.delegate == nil ? ", but NO delegate is set" : " -> delegate"
     }
 }
 

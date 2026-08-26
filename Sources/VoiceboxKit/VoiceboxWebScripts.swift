@@ -19,6 +19,16 @@ enum VoiceboxWebScripts {
     static let bgColorMessageName = "voiceboxBgColor"
     static let contentHeightMessageName = "voiceboxContentHeight"
     static let domReadyMessageName = "voiceboxDomReady"
+    static let sessionMessageName = "voiceboxSession"
+
+    /// The recorder's anonymous-session key in the page's own storage.
+    ///
+    /// CROSS-REPO CONTRACT: this string is owned by vbx-web
+    /// (`app/javascript/profiles_session.js`, `PROFILES_SESSION_STORAGE_KEY`). Every
+    /// message the recorder submits is stamped with this id, and the backend claims those
+    /// messages for an account by it. A rename on the web side silently stops capture
+    /// here — nothing fails to compile — so the two have to move together.
+    static let profilesSessionStorageKey = "vbx_profiles_session_id"
 
     // MARK: - Configuration
 
@@ -36,6 +46,7 @@ enum VoiceboxWebScripts {
         config.userContentController.addUserScript(baseUserScript())
         config.userContentController.addUserScript(eventUserScript())
         config.userContentController.addUserScript(domReadyUserScript())
+        config.userContentController.addUserScript(sessionUserScript())
         return config
     }
 
@@ -108,6 +119,13 @@ enum VoiceboxWebScripts {
                     var mh = window.webkit && window.webkit.messageHandlers;
                     if (mh && mh.\(eventMessageName)) { mh.\(eventMessageName).postMessage(msg); }
                 } catch (e) {}
+                // The recorder writes its anonymous session id around submit time, so a
+                // recorder event is the best moment to look for one. Defined by
+                // sessionUserScript; guarded because that script runs at document-END and
+                // this one at document-START, so an event fired in between finds nothing.
+                try {
+                    if (window.__voiceboxPostSessionId) { window.__voiceboxPostSessionId('event'); }
+                } catch (e) {}
             }
 
             // postMessage bridge (works when embedded in an iframe)
@@ -136,5 +154,81 @@ enum VoiceboxWebScripts {
         })();
         """
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+
+    /// Reports the recorder's anonymous session id to native.
+    ///
+    /// Messages recorded while signed out are attributed to this id and to no account. A
+    /// host hands it back at sign-in so the backend can claim them; without it they stay
+    /// anonymous permanently.
+    ///
+    /// It is read off the live page rather than derived, because vbx-web owns it and
+    /// nothing here can compute it: `localStorage` under ``profilesSessionStorageKey``. It
+    /// is written LAZILY — a first-time visitor has none until the recorder's own
+    /// controller connects — which is why one read at load is not enough. Three triggers:
+    /// document-end, the recorder's own complete/submit events, and a 1s poll that stops
+    /// the moment an id exists (capped at two minutes, the recorder's own hard limit).
+    ///
+    /// Posts each distinct value once per frame. `forMainFrameOnly: false` matches
+    /// `eventUserScript`, so two frames can report the same id — the receiver dedupes.
+    private static func sessionUserScript() -> WKUserScript {
+        let source = """
+        (function() {
+            var KEY = '\(profilesSessionStorageKey)';
+            var lastSessionId = null;
+
+            function readSessionId() {
+                try {
+                    return window.localStorage.getItem(KEY)
+                        || window.sessionStorage.getItem(KEY);
+                } catch (e) { return null; }
+            }
+
+            // Returns whether an id exists, which is what ends the poll — an
+            // already-posted value still counts, so a repeat read does not keep it running.
+            function post(reason) {
+                var id = readSessionId();
+                if (!id) { return false; }
+
+                if (id !== lastSessionId) {
+                    lastSessionId = id;
+                    try {
+                        var mh = window.webkit && window.webkit.messageHandlers;
+                        if (mh && mh.\(sessionMessageName)) {
+                            mh.\(sessionMessageName).postMessage({
+                                reason: reason,
+                                url: String(window.location.href),
+                                sessionId: id
+                            });
+                        }
+                    } catch (e) {}
+                }
+                return true;
+            }
+
+            // Let eventUserScript trigger a read the instant the recorder reports
+            // something, without duplicating any of this.
+            window.__voiceboxPostSessionId = post;
+
+            if (!post('load')) {
+                var tries = 0;
+                var timer = setInterval(function() {
+                    tries += 1;
+                    // 120 x 1s: the recorder's own hard limit is two minutes, so an id that
+                    // has not appeared by then is not going to.
+                    if (post('poll') || tries >= 120) { clearInterval(timer); }
+                }, 1000);
+            }
+
+            window.addEventListener('message', function(event) {
+                if (!event.data || !event.data.type) { return; }
+                if (event.data.type === 'voicebox:recordingComplete'
+                    || event.data.type === 'voicebox:messageSubmitted') {
+                    post('event');
+                }
+            });
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 }

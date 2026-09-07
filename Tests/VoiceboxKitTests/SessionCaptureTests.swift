@@ -1,5 +1,6 @@
 import XCTest
 import WebKit
+import JavaScriptCore
 @testable import VoiceboxKit
 
 /// Covers the anonymous-session capture contract (`VoiceboxWebScripts.sessionUserScript`).
@@ -65,6 +66,149 @@ final class SessionCaptureTests: XCTestCase {
         let event = scripts.first { $0.source.contains("recordingComplete") }?.source ?? ""
         XCTAssertTrue(event.contains("__voiceboxPostSessionId"),
                       "recorder events should prompt a session read")
+    }
+
+    // MARK: - Delivery, not read
+
+    /// THE regression this file exists for now: an id read while nothing is listening must
+    /// not be recorded as reported.
+    ///
+    /// A warmed WebView runs `sessionUserScript` with no message handler registered — they
+    /// are added in `VoiceboxViewController.setup` at adoption, and adoption does not
+    /// re-navigate, so the script never runs again. When `post()` latched `lastSessionId`
+    /// on the READ, that first warm read consumed the only report the host would ever get:
+    /// every later call, including the one fired at `messageSubmitted`, returned early and
+    /// the id never arrived. Recordings made in the app therefore stayed anonymous and no
+    /// sign-in could claim them — silently, because every layer of that path fails quietly.
+    ///
+    /// Exercised through JavaScriptCore rather than a real WebView so the two states that
+    /// matter — handler absent, then present, on ONE already-run script — are deterministic
+    /// rather than a load race.
+    func testAnIdReadWithNoHandlerIsReportedOnceOneAppears() {
+        let context = makeSessionScriptHost(storedId: "psid-abc-123", handlerPresent: false)
+
+        XCTAssertEqual(deliveredCount(context), 0,
+                       "nothing can be delivered before a handler exists")
+        XCTAssertEqual(context.objectForKeyedSubscript("intervals")?.toInt32(), 1,
+                       "an undelivered id must leave the poll running, not end it")
+
+        attachSessionHandler(to: context)
+        let posted = context.evaluateScript("window.__voiceboxPostSessionId('adopt')")
+
+        XCTAssertEqual(posted?.toBool(), true)
+        XCTAssertEqual(deliveredCount(context), 1,
+                       "the id must still be reportable — latching on the earlier read is the bug")
+        XCTAssertEqual(deliveredId(context), "psid-abc-123")
+    }
+
+    /// The other half of the same rule: once an id HAS been delivered, repeat triggers stay
+    /// quiet. `eventUserScript` fires on both recordingComplete and messageSubmitted, so
+    /// without this the host would get the same id two or three times per recording.
+    func testADeliveredIdIsNotSentAgain() {
+        let context = makeSessionScriptHost(storedId: "psid-abc-123", handlerPresent: true)
+
+        XCTAssertEqual(deliveredCount(context), 1, "delivered on the way in")
+        XCTAssertEqual(context.objectForKeyedSubscript("intervals")?.toInt32(), 0,
+                       "a delivered id ends the poll")
+
+        context.evaluateScript("window.__voiceboxPostSessionId('event')")
+        context.evaluateScript("window.__voiceboxPostSessionId('event')")
+
+        XCTAssertEqual(deliveredCount(context), 1, "each distinct id is delivered once")
+    }
+
+    /// No id yet is not a failure — it is the first-time recorder, whose id vbx-web writes
+    /// lazily. The script must keep polling and report whenever it appears.
+    func testAMissingIdKeepsPolling() {
+        let context = makeSessionScriptHost(storedId: nil, handlerPresent: true)
+
+        XCTAssertEqual(deliveredCount(context), 0)
+        XCTAssertEqual(context.objectForKeyedSubscript("intervals")?.toInt32(), 1)
+
+        context.evaluateScript("window.__vbxStoredId = 'psid-late-999';")
+        context.evaluateScript("window.__voiceboxPostSessionId('poll')")
+
+        XCTAssertEqual(deliveredCount(context), 1)
+        XCTAssertEqual(deliveredId(context), "psid-late-999")
+    }
+
+    // MARK: - Adoption nudge
+
+    /// The poll caps at two minutes, so a warm page that sat longer has stopped looking by
+    /// the time it is adopted. `VoiceboxViewController` therefore asks it to report once the
+    /// handler is registered — and the ORDER is the whole point, so it is asserted on source
+    /// (there is no runtime surface for "which line ran first").
+    func testAdoptionNudgesTheScriptAfterRegisteringTheHandler() {
+        let source = VoiceboxKitSourceReader.read("VoiceboxViewController.swift")
+        guard let register = source.range(of: "add(self, name: Self.sessionMessageName)"),
+              let nudge = source.range(of: "sessionRereadSnippet") else {
+            return XCTFail("adoption must register the session handler and then nudge the page")
+        }
+        XCTAssertTrue(register.upperBound < nudge.lowerBound,
+                      "nudging before the handler exists delivers the id to nobody — the original bug")
+    }
+
+    /// Evaluated against every WebView, including a fresh one still on `about:blank` that
+    /// has never run the script, so it has to be guarded rather than assume the global.
+    func testSessionRereadSnippetIsGuarded() {
+        let context = JSContext()!
+        context.evaluateScript("var window = {};")
+        context.evaluateScript(VoiceboxWebScripts.sessionRereadSnippet)
+        XCTAssertNil(context.exception, "the snippet must no-op on a page that never ran the script")
+    }
+
+    // MARK: - JS harness
+
+    /// Runs the real `sessionUserScript` source against stubbed page globals.
+    ///
+    /// `window.__vbxStoredId` stands in for the vbx-web key so a test can make the id appear
+    /// late, which is the normal case — the recorder writes it lazily.
+    private func makeSessionScriptHost(storedId: String?, handlerPresent: Bool) -> JSContext {
+        let context = JSContext()!
+        context.exceptionHandler = { _, exception in
+            XCTFail("JS exception: \(exception?.toString() ?? "unknown")")
+        }
+
+        let initialId = storedId.map { "'\($0)'" } ?? "null"
+        context.evaluateScript("""
+        var delivered = [];
+        var intervals = 0;
+        function setInterval(fn, ms) { intervals += 1; return intervals; }
+        function clearInterval(id) { intervals -= 1; }
+        var window = {
+            __vbxStoredId: \(initialId),
+            localStorage: { getItem: function (key) { return window.__vbxStoredId; } },
+            sessionStorage: { getItem: function (key) { return null; } },
+            location: { href: 'https://vbx.to/@acme' },
+            addEventListener: function (type, fn) {},
+            webkit: { messageHandlers: {} }
+        };
+        """)
+
+        if handlerPresent { attachSessionHandler(to: context) }
+        context.evaluateScript(sessionScriptSource())
+        return context
+    }
+
+    private func attachSessionHandler(to context: JSContext) {
+        context.evaluateScript("""
+        window.webkit.messageHandlers.\(VoiceboxWebScripts.sessionMessageName) = {
+            postMessage: function (message) { delivered.push(message); }
+        };
+        """)
+    }
+
+    private func sessionScriptSource() -> String {
+        let scripts = VoiceboxWebScripts.makeConfiguration().userContentController.userScripts
+        return scripts.first { $0.source.contains(VoiceboxWebScripts.profilesSessionStorageKey) }?.source ?? ""
+    }
+
+    private func deliveredCount(_ context: JSContext) -> Int {
+        Int(context.evaluateScript("delivered.length")?.toInt32() ?? -1)
+    }
+
+    private func deliveredId(_ context: JSContext) -> String? {
+        context.evaluateScript("delivered.length ? delivered[0].sessionId : null")?.toString()
     }
 
     // MARK: - Delegate

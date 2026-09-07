@@ -5,6 +5,25 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4]
+
+### Fixed
+
+- The anonymous session id now reaches the host from a **warmed** recorder. `sessionUserScript`
+  recorded an id as reported the moment it READ one, before checking whether a message handler
+  existed — and a warmed WebView has none, because handlers are registered in
+  `VoiceboxViewController.setup` at adoption and adoption deliberately does not re-navigate.
+  So the warm read consumed the only report the host would ever get: every later trigger,
+  including the one fired at `messageSubmitted`, saw the same id and returned early. The id
+  arrived only on a warm MISS (hot spare or cold load), which made it look intermittent
+  rather than broken. It now latches on DELIVERY, which also keeps the 1s poll running while
+  nothing is listening, and `VoiceboxViewController` asks an adopted page to report once its
+  handler is registered — for a warm view that outlived the poll's two-minute cap.
+
+  Host impact: recordings made through a preloaded recorder could not be claimed at sign-in,
+  since the host never learned which session to claim. No API change; hosts calling
+  `VoiceboxKit.preload(...)` want this release.
+
 ## [1.1.3]
 
 ### Added

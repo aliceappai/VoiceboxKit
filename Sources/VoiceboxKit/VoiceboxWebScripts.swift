@@ -30,6 +30,19 @@ enum VoiceboxWebScripts {
     /// here — nothing fails to compile — so the two have to move together.
     static let profilesSessionStorageKey = "vbx_profiles_session_id"
 
+    /// Asks an ALREADY-LOADED page to re-report its anonymous session id.
+    ///
+    /// Exists for one case: an ADOPTED WARM WebView. `sessionUserScript` ran there before
+    /// any message handler was registered, so nothing was delivered, and adoption does not
+    /// re-navigate — the script never runs again on its own. Its 1s poll closes most of
+    /// that gap by itself now that `post()` latches on delivery; this closes the rest, for
+    /// a warm view that sat longer than the poll's two-minute cap.
+    ///
+    /// Safe to evaluate on any page: it is guarded on the global, so a document that never
+    /// ran the script (a fresh WebView still on `about:blank`) is a no-op.
+    static let sessionRereadSnippet =
+        "window.__voiceboxPostSessionId && window.__voiceboxPostSessionId('adopt');"
+
     // MARK: - Configuration
 
     /// Builds the standard configuration every Voicebox WebView uses. Both the
@@ -171,6 +184,20 @@ enum VoiceboxWebScripts {
     ///
     /// Posts each distinct value once per frame. `forMainFrameOnly: false` matches
     /// `eventUserScript`, so two frames can report the same id — the receiver dedupes.
+    ///
+    /// ⚠️ The "once" is per DELIVERY, never per read, and that distinction is the whole
+    /// reason this script has a history. A WARMED WebView (`VoiceboxCache.warmWebViewCache`)
+    /// builds from the same configuration, so this script runs there — but a warm view has
+    /// no message handlers: they are registered in `VoiceboxViewController.setup` at
+    /// ADOPTION, and adoption deliberately does not re-navigate, so this script never runs
+    /// again. Latching `lastSessionId` on the read therefore marked the id delivered to
+    /// nobody, and every later call — including the one fired at `messageSubmitted` — saw
+    /// `id === lastSessionId` and returned early. The host learned the id only on a warm
+    /// MISS (hot spare or cold load), which is why it looked intermittent rather than
+    /// broken. Latching on delivery also keeps the poll alive while nothing is listening,
+    /// so an adopted view reports on its next tick; `VoiceboxViewController` nudges
+    /// `window.__voiceboxPostSessionId` at adoption for the case where the poll has
+    /// already spent its two minutes.
     private static func sessionUserScript() -> WKUserScript {
         let source = """
         (function() {
@@ -184,26 +211,32 @@ enum VoiceboxWebScripts {
                 } catch (e) { return null; }
             }
 
-            // Returns whether an id exists, which is what ends the poll — an
-            // already-posted value still counts, so a repeat read does not keep it running.
+            // Returns whether the id has REACHED THE HOST, which is what ends the poll.
+            // Deliberately not "does an id exist": a warm WebView has no message handler
+            // yet, so an id read there has been delivered to nobody and the poll must keep
+            // going. An id already delivered still counts, so a repeat read does not keep
+            // it running.
             function post(reason) {
                 var id = readSessionId();
                 if (!id) { return false; }
+                if (id === lastSessionId) { return true; }
 
-                if (id !== lastSessionId) {
-                    lastSessionId = id;
-                    try {
-                        var mh = window.webkit && window.webkit.messageHandlers;
-                        if (mh && mh.\(sessionMessageName)) {
-                            mh.\(sessionMessageName).postMessage({
-                                reason: reason,
-                                url: String(window.location.href),
-                                sessionId: id
-                            });
-                        }
-                    } catch (e) {}
-                }
-                return true;
+                var delivered = false;
+                try {
+                    var mh = window.webkit && window.webkit.messageHandlers;
+                    if (mh && mh.\(sessionMessageName)) {
+                        mh.\(sessionMessageName).postMessage({
+                            reason: reason,
+                            url: String(window.location.href),
+                            sessionId: id
+                        });
+                        delivered = true;
+                    }
+                } catch (e) {}
+
+                // Only now is it "reported". See the ⚠️ note on sessionUserScript().
+                if (delivered) { lastSessionId = id; }
+                return delivered;
             }
 
             // Let eventUserScript trigger a read the instant the recorder reports

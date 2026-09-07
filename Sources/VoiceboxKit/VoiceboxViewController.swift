@@ -289,6 +289,11 @@ public final class VoiceboxViewController: UIViewController {
         webView.configuration.userContentController.add(self, name: Self.domReadyMessageName)
         webView.configuration.userContentController.add(self, name: Self.sessionMessageName)
 
+        // An adopted WARM page ran `sessionUserScript` before the handler above existed, and
+        // adoption does not re-navigate, so ask it to report now. No-op on a fresh WebView
+        // (the global does not exist yet) and on a warm page that has nothing to report.
+        webView.evaluateJavaScript(VoiceboxWebScripts.sessionRereadSnippet, completionHandler: nil)
+
         // For fitContent mode, register message handler to receive content height
         if voiceboxView.presentationMode == .fitContent {
             webView.configuration.userContentController.add(

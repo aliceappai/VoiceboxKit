@@ -315,6 +315,11 @@ location usage description or WebKit will not show the system location prompt
 No additional VoiceboxKit API is required — WebKit requests when-in-use
 authorization when the visitor turns the toggle on.
 
+Some voiceboxes **require** the device location: the recorder reads it when the
+visitor taps the mic or keyboard, and does not open either without it. In a host
+app without `NSLocationWhenInUseUsageDescription`, no location prompt appears
+and those voiceboxes cannot take a message.
+
 ## Theming
 
 All `VoiceboxTheme` properties are optional — set only what you want to override. `nil` means "use SDK default".

@@ -5,6 +5,31 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5]
+
+### Fixed
+
+- The recorder no longer sticks on a shimmering, blank screen after **"Send another"**. The
+  reveal latch that uncovers the WebView was one-shot per CONTROLLER, not per load, so it
+  only ever allowed ONE reveal per open. A reload therefore hid the content and never
+  brought it back: `didStartProvisionalNavigation` ran `startLoading()` — which in
+  `.floatingCard` sets `webView.alpha = 0` and starts the card skeleton — and the
+  `didFinish` / DOM-ready signals that follow both returned early at the latch, so
+  `stopLoading()` never ran. The card stayed at alpha 0 behind a shimmer that never stopped,
+  with only the × still working.
+
+  This was every "record → send → Send another" run, not a corner case: that button is
+  `onclick="window.location.reload()"` in vbx-web, and submission is a Turbo Stream replace
+  that leaves the URL on `/@handle`, so the reload re-navigates the main frame to the same
+  recorder URL. In `.floatingCard` the page paints the background as well as the card, so
+  hiding the WebView blanks the whole screen rather than just the card.
+
+  The latch is now cleared by `startLoading()`, making it one-shot per LOAD: whatever hides
+  the content owes a reveal. First-open behaviour is unchanged — the reset is a no-op on
+  every initial-load path — and the stale-document guard above the latch is untouched, so
+  the warm/hot-spare protection it provides still holds. A failed reload also recovers now
+  instead of staying hidden. No API change.
+
 ## [1.1.4]
 
 ### Fixed

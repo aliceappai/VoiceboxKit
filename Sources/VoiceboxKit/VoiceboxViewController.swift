@@ -45,7 +45,9 @@ public final class VoiceboxViewController: UIViewController {
     /// NOT issue a request — the one already running is the one we're waiting on.
     private var joinedInFlightWarm = false
     private var hasAppeared = false
-    /// One-shot latch for `revealContent(documentURL:)` — DOM-ready and `didFinish` both call it.
+    /// Latch for `revealContent(documentURL:)` — DOM-ready and `didFinish` both call it.
+    /// Cleared by `startLoading()`, so it is one-shot per LOAD rather than per controller:
+    /// a re-navigation (the recorder's "Send another" reload) has to reveal again.
     private var didReveal = false
     private var registeredContentHeightHandler = false
     /// Whether THIS controller currently holds a `VoiceboxScreenAwake` reference, so the
@@ -491,6 +493,12 @@ public final class VoiceboxViewController: UIViewController {
     /// look. Hide the WebView while the skeleton is up and reveal it as the
     /// skeleton fades, so the transition is skeleton → card, never both at once.
     private func startLoading() {
+        // Hiding the content owes a reveal, so clear the one-shot latch: a re-navigation is
+        // otherwise terminal. "Send another" in the recorder is a `location.reload()`, which
+        // hides the WebView here, and a latch left set from the first open makes
+        // `revealContent` return early — so `stopLoading()` never runs and the card sits at
+        // alpha 0 behind a shimmer that never stops.
+        didReveal = false
         if isFloatingCard {
             webView.alpha = 0
             cardSkeletonView?.startAnimating()
@@ -766,8 +774,9 @@ public final class VoiceboxViewController: UIViewController {
     ///
     /// Waiting for `didFinish` alone cost ~400 ms of staring at a skeleton while already-
     /// painted content sat hidden behind it — see the doc comment on `domReadyUserScript`.
-    /// One-shot, because both callers can fire and `didFinish` also runs again after in-page
-    /// navigations and web-content-process relaunches.
+    /// One-shot PER LOAD, because both callers fire for the same navigation. `startLoading()`
+    /// clears the latch, so a later navigation — an in-page reload, or a web-content-process
+    /// relaunch — reveals again instead of staying hidden behind the skeleton forever.
     private func revealContent(documentURL: URL?) {
         // Identity check, NOT a timing check. The hot spare arrives holding a blank document
         // that runs this same script, and an off-screen WebView never paints — so its queued

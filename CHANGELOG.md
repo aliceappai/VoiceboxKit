@@ -5,6 +5,59 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5]
+
+### Fixed
+
+- **The recorder no longer blanks and shimmers after "Send another".** It used to stick there
+  permanently: a blank screen behind a shimmer that never stopped, with only the × working.
+
+  Two things combined. `startLoading()` covers the content — in `.floatingCard` it sets
+  `webView.alpha = 0` and raises the card skeleton — and it ran on EVERY
+  `didStartProvisionalNavigation`. But `revealContent`, which uncovers it, was latched
+  one-shot per CONTROLLER. So the first open consumed the only reveal the controller would
+  ever do, and every later load covered the content with nothing left to uncover it: the
+  `didFinish` and DOM-ready signals both returned early at the latch, `stopLoading()` never
+  ran, and the card sat at alpha 0 for good.
+
+  That was every "record → send → Send another" run, not a corner case. The button is
+  `onclick="window.location.reload()"` in vbx-web, and submission is a Turbo Stream replace
+  that leaves the URL on `/@handle`, so the reload re-navigates the main frame to the same
+  recorder URL. And because the page paints the background as well as the card, covering it
+  blanks the whole screen rather than just the card.
+
+  Now only the FIRST load covers the screen. A re-navigation is the same recorder before and
+  after, and WebKit holds the old page painted until the new one commits, so there is nothing
+  to hide — `handleLoadingState` gates `startLoading()` on the reveal latch, which doubles as
+  "content is already on screen". This matches Android, whose `onPageStarted` only logs and
+  whose skeleton is raised solely by `loadUrl()`; that is why the same vbx-web page never
+  misbehaved there, and why no web change was needed on either platform.
+
+  A latched load still runs the per-document background strip (`playFloatingCardEntrance`
+  gained `animated:` for it). That strip is page setup, not part of the reveal: each new
+  document brings its own CSS background back, and the native layer behind the WebView is
+  meant to be the only thing painting it. Left to paint together at different scaling, the
+  background visibly shifted as the card swapped.
+
+  A cold open is unchanged. The stale-document guard above the latch is untouched, so the
+  warm/hot-spare protection still holds. The trade-off is that the outgoing post-message
+  screen stays up for a moment on the way back to the recorder, which is preferable to
+  blanking it. No API change.
+
+- **The recorder no longer sometimes shows its own footer**, with the terms and privacy
+  links, when the sheet is opened repeatedly. The chrome CSS that hides it arrived as a
+  `WKUserScript` injected at document-end, and `addUserScript` only reaches documents created
+  after it — so a WebView adopted while its warm load was still IN FLIGHT could commit its
+  document first and never receive the styling. Only the already-loaded preload path injected
+  directly, leaving the in-flight path to race; opening the recorder repeatedly is exactly how
+  that race is lost, since each open warms the next. It is now applied on every load from
+  `revealContent`, above the reveal latch so first loads are covered too, and early enough
+  (the page's DOM-ready signal) to land before the footer's first paint. The injected script
+  is safe to re-run: it reuses its own `<style>` element by id, and its context-menu
+  listeners are now bound behind a window-level guard like the dismiss bridge already was —
+  `addEventListener` cannot dedupe anonymous handlers, so each pass had been stacking another
+  pair onto the same document.
+
 ## [1.1.4]
 
 ### Fixed

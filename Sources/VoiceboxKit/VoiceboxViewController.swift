@@ -45,7 +45,14 @@ public final class VoiceboxViewController: UIViewController {
     /// NOT issue a request — the one already running is the one we're waiting on.
     private var joinedInFlightWarm = false
     private var hasAppeared = false
-    /// One-shot latch for `revealContent(documentURL:)` — DOM-ready and `didFinish` both call it.
+    /// Latch for `revealContent(documentURL:)` — DOM-ready and `didFinish` both call it, and
+    /// only the first of the two may reveal. Never cleared, which is safe for ONE reason:
+    /// nothing covers the content after the first load (`handleLoadingState` leaves a
+    /// re-navigation alone), so a set latch can never strand a hidden WebView. It doubles as
+    /// "content is already on screen", which is how that check knows there is nothing to
+    /// cover. ⚠️ Anything that hides the WebView again has to clear this, or `revealContent`
+    /// returns early and the card sits at alpha 0 behind a shimmer that never stops — the
+    /// "Send another" hang. `testOnlyTheFirstLoadCoversTheScreen` pins the one caller.
     private var didReveal = false
     private var registeredContentHeightHandler = false
     /// Whether THIS controller currently holds a `VoiceboxScreenAwake` reference, so the
@@ -541,10 +548,18 @@ public final class VoiceboxViewController: UIViewController {
     /// onto a fixed layer *behind* the page content and animates that; the card
     /// (`#main`) is animated separately on top. Respects Reduce Motion. `completion`
     /// always runs (even with `.none`) so the caller can un-hide the WebView.
-    private func playFloatingCardEntrance(completion: @escaping () -> Void) {
+    ///
+    /// Two jobs, deliberately in one JS pass: the per-document background capture-and-strip
+    /// (the capture has to happen BEFORE the strip, or it captures transparent) and the
+    /// entrance itself. `animated: false` performs only the first, for a load that was never
+    /// covered and so has nothing to make an entrance from.
+    private func playFloatingCardEntrance(
+        animated: Bool = true,
+        completion: @escaping () -> Void
+    ) {
         let anim = voiceboxView.entranceAnimation
-        let revealBg = anim.contains(.backgroundReveal)
-        let liftCard = anim.contains(.cardLiftIn)
+        let revealBg = animated && anim.contains(.backgroundReveal)
+        let liftCard = animated && anim.contains(.cardLiftIn)
         // Capture the page's background (colour + image), then STRIP it from the page so
         // the WebView is fully transparent and the NATIVE layer behind it is the ONLY
         // background. This removes the position:fixed reveal layer that WKWebView
@@ -766,8 +781,9 @@ public final class VoiceboxViewController: UIViewController {
     ///
     /// Waiting for `didFinish` alone cost ~400 ms of staring at a skeleton while already-
     /// painted content sat hidden behind it — see the doc comment on `domReadyUserScript`.
-    /// One-shot, because both callers can fire and `didFinish` also runs again after in-page
-    /// navigations and web-content-process relaunches.
+    /// One-shot, because both callers fire for the same navigation. A later load stays
+    /// latched on purpose, never having been covered — but still runs the per-document page
+    /// setup below, which is NOT part of the reveal.
     private func revealContent(documentURL: URL?) {
         // Identity check, NOT a timing check. The hot spare arrives holding a blank document
         // that runs this same script, and an off-screen WebView never paints — so its queued
@@ -779,7 +795,38 @@ public final class VoiceboxViewController: UIViewController {
         if let documentURL, !VoiceboxURLBuilder.isRecorderPath(documentURL, handle: voiceboxView.handle) {
             return
         }
-        guard !didReveal else { return }
+
+        // Per-document, on EVERY load and before the latch: the chrome CSS (footer hidden,
+        // card centred) normally arrives as a user script at document-end, but a WebView
+        // ADOPTED MID-LOAD can miss it. `addUserScript` only reaches documents created after
+        // it, and a warm load whose bundle is already cached can commit before `setupWebView`
+        // adds it — only the already-loaded preload path injects directly today, so the
+        // in-flight path is left racing. When it loses, the recorder renders its own footer
+        // and the terms/privacy links show, which is the "sometimes it shows chrome" report.
+        //
+        // Applied here rather than in `handleLoadingState` so it lands with the page's
+        // DOM-ready signal, ahead of the footer's first paint; `didFinish` would be late
+        // enough to show it for a frame. Idempotent — the injection reuses its own <style>.
+        voiceboxView.applyChromeCSSNow(to: webView)
+
+        guard !didReveal else {
+            // A later load of the same recorder. It was never covered — `handleLoadingState`
+            // leaves a re-navigation alone — so there is nothing to uncover. But the NEW
+            // document brings its own CSS background back, and the native layer behind the
+            // WebView is meant to be the only thing painting it: left alone the two paint
+            // together, at different scaling, and the background visibly shifts as the card
+            // swaps. That is the "card jumps on Send another" report.
+            //
+            // Runs from the page's DOM-ready signal, early enough to beat the background's
+            // first paint — `didFinish` alone would already be too late. The strip is
+            // idempotent and `installNativeBackground` is latched on its own view, so the
+            // second call for the same load (DOM-ready, then `didFinish`) costs a no-op JS
+            // pass and is left unguarded on purpose: one flag fewer to keep in step.
+            if isFloatingCard {
+                playFloatingCardEntrance(animated: false) {}
+            }
+            return
+        }
         didReveal = true
 
         if voiceboxView.theme.backgroundColor == nil {
@@ -798,6 +845,20 @@ public final class VoiceboxViewController: UIViewController {
 
     private func handleLoadingState(_ isLoading: Bool) {
         if isLoading {
+            // Only the FIRST load covers the screen. A re-navigation — the recorder's own
+            // "Send another" is a `location.reload()` — is the same recorder before and
+            // after, and WebKit keeps the old page painted until the new one commits, so
+            // there is nothing to hide and nothing worth hiding it for. Covering it blanked
+            // the whole screen (in `.floatingCard` the page paints the background too) and
+            // shimmered for the length of a cached reload.
+            //
+            // This is what Android does: its `onPageStarted` only logs, and the skeleton is
+            // raised solely by `loadUrl()`, so a reload there never flickers.
+            //
+            // Cost: for a moment the OUTGOING page is still on screen — the post-message
+            // screen, on the way back to the recorder. Better than blanking it, and the
+            // reason the latch below may stay set.
+            guard !didReveal else { return }
             startLoading()
         } else {
             // Normally a no-op by now: the page's DOM-ready signal has already revealed it.

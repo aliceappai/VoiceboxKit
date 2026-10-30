@@ -9,26 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The recorder no longer sticks on a shimmering, blank screen after **"Send another"**. The
-  reveal latch that uncovers the WebView was one-shot per CONTROLLER, not per load, so it
-  only ever allowed ONE reveal per open. A reload therefore hid the content and never
-  brought it back: `didStartProvisionalNavigation` ran `startLoading()` — which in
-  `.floatingCard` sets `webView.alpha = 0` and starts the card skeleton — and the
-  `didFinish` / DOM-ready signals that follow both returned early at the latch, so
-  `stopLoading()` never ran. The card stayed at alpha 0 behind a shimmer that never stopped,
-  with only the × still working.
+- **The recorder no longer blanks and shimmers after "Send another".** It used to stick there
+  permanently: a blank screen behind a shimmer that never stopped, with only the × working.
 
-  This was every "record → send → Send another" run, not a corner case: that button is
+  Two things combined. `startLoading()` covers the content — in `.floatingCard` it sets
+  `webView.alpha = 0` and raises the card skeleton — and it ran on EVERY
+  `didStartProvisionalNavigation`. But `revealContent`, which uncovers it, was latched
+  one-shot per CONTROLLER. So the first open consumed the only reveal the controller would
+  ever do, and every later load covered the content with nothing left to uncover it: the
+  `didFinish` and DOM-ready signals both returned early at the latch, `stopLoading()` never
+  ran, and the card sat at alpha 0 for good.
+
+  That was every "record → send → Send another" run, not a corner case. The button is
   `onclick="window.location.reload()"` in vbx-web, and submission is a Turbo Stream replace
   that leaves the URL on `/@handle`, so the reload re-navigates the main frame to the same
-  recorder URL. In `.floatingCard` the page paints the background as well as the card, so
-  hiding the WebView blanks the whole screen rather than just the card.
+  recorder URL. And because the page paints the background as well as the card, covering it
+  blanks the whole screen rather than just the card.
 
-  The latch is now cleared by `startLoading()`, making it one-shot per LOAD: whatever hides
-  the content owes a reveal. First-open behaviour is unchanged — the reset is a no-op on
-  every initial-load path — and the stale-document guard above the latch is untouched, so
-  the warm/hot-spare protection it provides still holds. A failed reload also recovers now
-  instead of staying hidden. No API change.
+  Now only the FIRST load covers the screen. A re-navigation is the same recorder before and
+  after, and WebKit holds the old page painted until the new one commits, so there is nothing
+  to hide — `handleLoadingState` gates `startLoading()` on the reveal latch, which doubles as
+  "content is already on screen". This matches Android, whose `onPageStarted` only logs and
+  whose skeleton is raised solely by `loadUrl()`; that is why the same vbx-web page never
+  misbehaved there, and why no web change was needed on either platform.
+
+  A latched load still runs the per-document background strip (`playFloatingCardEntrance`
+  gained `animated:` for it). That strip is page setup, not part of the reveal: each new
+  document brings its own CSS background back, and the native layer behind the WebView is
+  meant to be the only thing painting it. Left to paint together at different scaling, the
+  background visibly shifted as the card swapped.
+
+  A cold open is unchanged. The stale-document guard above the latch is untouched, so the
+  warm/hot-spare protection still holds. The trade-off is that the outgoing post-message
+  screen stays up for a moment on the way back to the recorder, which is preferable to
+  blanking it. No API change.
 
 ## [1.1.4]
 

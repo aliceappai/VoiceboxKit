@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   screen stays up for a moment on the way back to the recorder, which is preferable to
   blanking it. No API change.
 
+- **The recorder no longer sometimes shows its own footer**, with the terms and privacy
+  links, when the sheet is opened repeatedly. The chrome CSS that hides it arrived as a
+  `WKUserScript` injected at document-end, and `addUserScript` only reaches documents created
+  after it — so a WebView adopted while its warm load was still IN FLIGHT could commit its
+  document first and never receive the styling. Only the already-loaded preload path injected
+  directly, leaving the in-flight path to race; opening the recorder repeatedly is exactly how
+  that race is lost, since each open warms the next. It is now applied on every load from
+  `revealContent`, above the reveal latch so first loads are covered too, and early enough
+  (the page's DOM-ready signal) to land before the footer's first paint. The injected script
+  is safe to re-run: it reuses its own `<style>` element by id, and its context-menu
+  listeners are now bound behind a window-level guard like the dismiss bridge already was —
+  `addEventListener` cannot dedupe anonymous handlers, so each pass had been stacking another
+  pair onto the same document.
+
 ## [1.1.4]
 
 ### Fixed

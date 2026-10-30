@@ -194,8 +194,15 @@ public final class VoiceboxView {
     private var chromeInjectionJS: String {
         var js = """
         (function() {
-            document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
-            document.addEventListener('long-press', function(e) { e.preventDefault(); });
+            // Guarded like the dismiss bridge below: this whole script re-runs on every
+            // load (`revealContent` applies it per document, and the user script may have
+            // too), and `addEventListener` cannot dedupe anonymous handlers — unguarded,
+            // each pass stacked another pair of listeners on the same document.
+            if (!window.__vbxMenuBound) {
+                window.__vbxMenuBound = true;
+                document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+                document.addEventListener('long-press', function(e) { e.preventDefault(); });
+            }
             var existing = document.getElementById('voiceboxkit-chrome-style');
             var style = existing || document.createElement('style');
             style.id = 'voiceboxkit-chrome-style';

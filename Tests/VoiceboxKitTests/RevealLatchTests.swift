@@ -122,6 +122,64 @@ final class RevealLatchTests: XCTestCase {
                        + "per navigation (DOM-ready and didFinish)")
     }
 
+    // MARK: - Chrome CSS reaches every document
+
+    /// The footer-hiding CSS must be applied on EVERY load, above the latch, not left to the
+    /// user script alone. `addUserScript` only reaches documents created after it, so a
+    /// WebView adopted mid-load can commit its document first and never get the styling —
+    /// the recorder then renders its own footer and the terms/privacy links show.
+    ///
+    /// Above the latch on purpose: below it, only reloads would be covered, and the racing
+    /// path is a FIRST load.
+    func testChromeCSSIsAppliedOnEveryLoad() {
+        let source = VoiceboxKitSourceReader.read("VoiceboxViewController.swift")
+        let reveal = Self.body(after: "func revealContent(", in: source)
+
+        XCTAssertFalse(reveal.isEmpty, "could not find revealContent()")
+
+        guard let cssIndex = reveal.range(of: "applyChromeCSSNow")?.lowerBound,
+              let latchIndex = reveal.range(of: "guard !didReveal")?.lowerBound
+        else {
+            return XCTFail("revealContent must apply the chrome CSS, or a WebView adopted "
+                           + "mid-load keeps the recorder's own footer")
+        }
+
+        XCTAssertTrue(cssIndex < latchIndex,
+                      "the CSS must be applied ABOVE the latch — below it only a reload is "
+                      + "covered, and the path that misses the user script is a first load")
+    }
+
+    /// Applying the chrome CSS per-load only works because the injected script is safe to
+    /// re-run. The style element is reused by id, and the dismiss bridge is guarded — but the
+    /// context-menu listeners were not, and `addEventListener` cannot dedupe anonymous
+    /// handlers, so every pass stacked another pair onto the same document. Harmless in
+    /// effect (`preventDefault` twice is `preventDefault` once) but it made "idempotent"
+    /// untrue, and this is now the only claim `revealContent`'s comment rests on.
+    func testTheInjectedScriptIsSafeToReRun() {
+        let source = VoiceboxKitSourceReader.read("VoiceboxView.swift")
+        let js = Self.body(after: "var chromeInjectionJS: String", in: source)
+
+        XCTAssertFalse(js.isEmpty, "could not find chromeInjectionJS")
+
+        for listener in ["contextmenu", "long-press"] {
+            guard let listenerIndex = js.range(of: "addEventListener('\(listener)'")?.lowerBound,
+                  let guardIndex = js.range(of: "window.__vbxMenuBound")?.lowerBound
+            else {
+                return XCTFail("\(listener) must be bound inside a window-level guard — the "
+                               + "script re-runs on every load")
+            }
+            XCTAssertTrue(guardIndex < listenerIndex,
+                          "the guard has to precede the \(listener) binding or it cannot "
+                          + "stop the duplicate")
+        }
+
+        XCTAssertTrue(js.contains("window.__vbxDismissBound"),
+                      "the dismiss bridge must stay guarded too — an unguarded re-bind posts "
+                      + "'dismiss' once per pass, which WOULD be user-visible")
+        XCTAssertTrue(js.contains("var style = existing || document.createElement('style')"),
+                      "the style element must be reused by id rather than appended again")
+    }
+
     // MARK: - Helper
 
     /// Text between the first `{` at or after `signature` and its matching `}`. Crude brace

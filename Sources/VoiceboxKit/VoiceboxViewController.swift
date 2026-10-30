@@ -795,6 +795,20 @@ public final class VoiceboxViewController: UIViewController {
         if let documentURL, !VoiceboxURLBuilder.isRecorderPath(documentURL, handle: voiceboxView.handle) {
             return
         }
+
+        // Per-document, on EVERY load and before the latch: the chrome CSS (footer hidden,
+        // card centred) normally arrives as a user script at document-end, but a WebView
+        // ADOPTED MID-LOAD can miss it. `addUserScript` only reaches documents created after
+        // it, and a warm load whose bundle is already cached can commit before `setupWebView`
+        // adds it — only the already-loaded preload path injects directly today, so the
+        // in-flight path is left racing. When it loses, the recorder renders its own footer
+        // and the terms/privacy links show, which is the "sometimes it shows chrome" report.
+        //
+        // Applied here rather than in `handleLoadingState` so it lands with the page's
+        // DOM-ready signal, ahead of the footer's first paint; `didFinish` would be late
+        // enough to show it for a frame. Idempotent — the injection reuses its own <style>.
+        voiceboxView.applyChromeCSSNow(to: webView)
+
         guard !didReveal else {
             // A later load of the same recorder. It was never covered — `handleLoadingState`
             // leaves a re-navigation alone — so there is nothing to uncover. But the NEW

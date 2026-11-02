@@ -54,7 +54,12 @@ public final class VoiceboxViewController: UIViewController {
     /// returns early and the card sits at alpha 0 behind a shimmer that never stops — the
     /// "Send another" hang. `testOnlyTheFirstLoadCoversTheScreen` pins the one caller.
     private var didReveal = false
-    private var registeredContentHeightHandler = false
+    /// Script message names currently registered on the WebView's content controller, so
+    /// removal takes off exactly what was added (`.fitContent` adds one more).
+    private var registeredScriptMessageNames: [String] = []
+    /// Set once the page has been unloaded for a dismissal (`unloadForDismissal`). Cleared if
+    /// the same controller is shown again, which reloads the recorder.
+    private var hasUnloadedPage = false
     /// Whether THIS controller currently holds a `VoiceboxScreenAwake` reference, so the
     /// acquire/release pair stays balanced across repeated appear/disappear cycles.
     private var isHoldingScreenAwake = false
@@ -132,6 +137,11 @@ public final class VoiceboxViewController: UIViewController {
         requestMicrophonePermission()
     }
 
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        reloadIfUnloaded()
+    }
+
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
@@ -154,6 +164,14 @@ public final class VoiceboxViewController: UIViewController {
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         releaseScreenAwakeIfNeeded()
+        // Only when the recorder is going away for good — never when it is merely covered
+        // by another presentation or a push, which brings it straight back. Here rather than
+        // in viewWillDisappear: an interactive swipe-to-dismiss that the user abandons runs
+        // viewWillDisappear but never viewDidDisappear, and unloading there would leave a
+        // blank sheet behind the cancelled swipe.
+        if isLeavingPermanently {
+            unloadForDismissal()
+        }
         if hasAppeared {
             voiceboxView.delegate?.voiceboxDidDismiss(voiceboxView)
             onDidDismissSelf?()
@@ -291,24 +309,105 @@ public final class VoiceboxViewController: UIViewController {
         // configuration for both fresh and warmed WebViews, so — unlike before —
         // a reused preloaded WebView already has the recorder observers active
         // and just needs its handler registered here.
-        webView.configuration.userContentController.add(self, name: Self.voiceboxEventMessageName)
-        webView.configuration.userContentController.add(self, name: Self.bgColorMessageName)
-        webView.configuration.userContentController.add(self, name: Self.domReadyMessageName)
-        webView.configuration.userContentController.add(self, name: Self.sessionMessageName)
+        registerScriptMessageHandlers(on: webView.configuration.userContentController)
 
         // An adopted WARM page ran `sessionUserScript` before the handler above existed, and
         // adoption does not re-navigate, so ask it to report now. No-op on a fresh WebView
         // (the global does not exist yet) and on a warm page that has nothing to report.
         webView.evaluateJavaScript(VoiceboxWebScripts.sessionRereadSnippet, completionHandler: nil)
+    }
 
-        // For fitContent mode, register message handler to receive content height
+    // MARK: - Script message handlers
+
+    /// Every script message name this controller listens on. `.fitContent` also listens
+    /// for the page's content height.
+    private var scriptMessageNames: [String] {
+        var names = [
+            Self.voiceboxEventMessageName,
+            Self.bgColorMessageName,
+            Self.domReadyMessageName,
+            Self.sessionMessageName,
+        ]
         if voiceboxView.presentationMode == .fitContent {
-            webView.configuration.userContentController.add(
-                self,
-                name: Self.contentHeightMessageName
-            )
-            registeredContentHeightHandler = true
+            names.append(Self.contentHeightMessageName)
         }
+        return names
+    }
+
+    /// Registers this controller for its script messages through a `WeakScriptMessageHandler`.
+    ///
+    /// ⚠️ Never register `self` directly. The content controller retains its handlers and this
+    /// controller retains the WebView that owns the content controller, so registering `self`
+    /// is a retain cycle: every recorder ever opened stayed alive after closing — the
+    /// controller, its WebView and the page's WebContent process, still running JavaScript.
+    /// `deinit`, the only place the handlers came off, could never run.
+    /// `testRegisteredHandlersDoNotRetainTheController` pins this.
+    func registerScriptMessageHandlers(on contentController: WKUserContentController) {
+        guard registeredScriptMessageNames.isEmpty else { return }
+        let proxy = WeakScriptMessageHandler(target: self)
+        let names = scriptMessageNames
+        for name in names {
+            contentController.add(proxy, name: name)
+        }
+        registeredScriptMessageNames = names
+    }
+
+    /// Removes whatever `registerScriptMessageHandlers(on:)` added. Idempotent.
+    func unregisterScriptMessageHandlers(from contentController: WKUserContentController) {
+        for name in registeredScriptMessageNames {
+            contentController.removeScriptMessageHandler(forName: name)
+        }
+        registeredScriptMessageNames = []
+    }
+
+    // MARK: - Dismissal
+
+    /// Whether this disappearance is the recorder going away for good: this controller, or
+    /// any container it sits in, is being dismissed or removed from its parent. Walks the
+    /// parents because a recorder is rarely the presented controller itself — a host can wrap
+    /// it in a navigation controller, and SwiftUI's sheets present a hosting controller with
+    /// this one as a child.
+    ///
+    /// False when the recorder is only covered (a presentation over it, a push on top of it),
+    /// which is what keeps a recorder that is coming back from being unloaded.
+    var isLeavingPermanently: Bool {
+        var controller: UIViewController? = self
+        while let current = controller {
+            if current.isBeingDismissed || current.isMovingFromParent { return true }
+            controller = current.parent
+        }
+        return false
+    }
+
+    /// Unloads the recorder page, the way closing a browser tab does, so it gets `pagehide`
+    /// with `persisted: false` — which is when vbx-web sends the "leave" beacon that lets
+    /// the server merge an unfinished take within ~30 s rather than ~30 min. See
+    /// `VoiceboxPageUnloader` for how, and why the WebView outlives this controller briefly.
+    ///
+    /// Called on a real dismissal only: from `viewDidDisappear` when `isLeavingPermanently`,
+    /// and from SwiftUI's `dismantleUIViewController`, which is the dependable signal for a
+    /// representable inside a `.sheet` / `.fullScreenCover`. Idempotent, so both may fire.
+    /// Pooled warm WebViews are untouched: this only ever sees the WebView this controller
+    /// adopted, which has already left the pool.
+    func unloadForDismissal() {
+        guard !hasUnloadedPage, let webView else { return }
+        hasUnloadedPage = true
+        // Stop listening first: the blank page runs the shared user scripts too, and nothing
+        // it says is about this recorder.
+        unregisterScriptMessageHandlers(from: webView.configuration.userContentController)
+        VoiceboxPageUnloader.shared.unload(webView)
+    }
+
+    /// The same controller shown again after `unloadForDismissal` — only possible for a host
+    /// that keeps the controller and presents it a second time. Takes the WebView back and
+    /// loads the recorder again rather than showing the blank page it was left on.
+    private func reloadIfUnloaded() {
+        guard hasUnloadedPage, let webView else { return }
+        hasUnloadedPage = false
+        VoiceboxPageUnloader.shared.release(webView)
+        webView.navigationDelegate = navigationDelegate
+        registerScriptMessageHandlers(on: webView.configuration.userContentController)
+        webView.load(URLRequest(url: voiceboxView.buildURL()))
     }
 
     deinit {
@@ -322,12 +421,10 @@ public final class VoiceboxViewController: UIViewController {
             isHoldingScreenAwake = false
             VoiceboxScreenAwake.shared.release()
         }
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.voiceboxEventMessageName)
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.bgColorMessageName)
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.domReadyMessageName)
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.sessionMessageName)
-        if registeredContentHeightHandler {
-            webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.contentHeightMessageName)
+        // Tidying, not what frees this controller: the proxies only hold it weakly. Already
+        // empty after `unloadForDismissal`.
+        for name in registeredScriptMessageNames {
+            webView?.configuration.userContentController.removeScriptMessageHandler(forName: name)
         }
     }
 

@@ -5,6 +5,38 @@ All notable changes to VoiceboxKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.6]
+
+### Fixed
+
+- **A closed recorder is now actually released.** Every recorder ever opened used to stay
+  alive after it closed — the `VoiceboxViewController`, its `WKWebView`, and the page's
+  WebContent process, with the recorder's JavaScript still running. Memory grew with each
+  open until iOS started killing WebContent processes, which shows up as a blank recorder.
+
+  The controller registered itself as its WebView's script message handler.
+  `WKUserContentController` retains its handlers, and the controller retains the WebView
+  that owns the content controller, so the two kept each other alive; `deinit`, the only
+  place the handlers came off, never ran. Handlers now go through a weak proxy
+  (`WeakScriptMessageHandler`), so nothing the WebView owns retains the controller.
+
+- **Closing the recorder mid-recording now behaves like closing a browser tab.** Because the
+  page never unloaded, it never got `pagehide`, so vbx-web's "leave" beacon never went out
+  and the server left the take `capturing` for ~30 min until its sweeper ran, instead of
+  merging it within ~30 s (vbx-web `docs/RECORDER.md`, *When the visitor does not finish*).
+  On a real dismissal the SDK now navigates the page to `about:blank`, which gives it
+  `pagehide` with `persisted: false`, and keeps the WebView alive until that navigation has
+  finished (at most 5 s) so the page is not torn down first.
+
+  "Real dismissal" means the recorder is going away for good: from `viewDidDisappear` when
+  the controller or a container it sits in is being dismissed or removed from its parent
+  (`VoiceboxView.present(from:)`, `.floatingCard`, a host's own navigation controller), and
+  from SwiftUI's `dismantleUIViewController` for `.sheet` / `.fullScreenCover`. A recorder
+  that is only covered by another presentation or a push is left alone, as is an abandoned
+  swipe-to-dismiss. Warmed, never-shown WebViews in the preload pool are untouched. A host
+  that keeps a `VoiceboxViewController` and presents the same instance again gets the
+  recorder reloaded rather than the blank page. No API change.
+
 ## [1.1.5]
 
 ### Fixed

@@ -356,6 +356,42 @@ VoiceboxView(handle: "feedback", theme: .lightCircle)
 
 If the network is unavailable and no cached content exists, VoiceboxKit displays a native offline fallback UI with a retry button. Cached content is always served first when available.
 
+## Example App
+
+`Example/VoiceboxExample.xcodeproj` is a harness that reaches every scenario the SDK
+exposes: all seven presentation modes, both API styles, the theme presets, the global
+flags, preloading, and sessions. Callbacks land in an on-screen event log.
+
+```bash
+open Example/VoiceboxExample.xcodeproj
+```
+
+It depends on this repository through a **local** package reference, not a version or a
+tag — edit anything under `Sources/` and ⌘R picks it up. There is nothing to re-add and
+no pin to bump while you work on the SDK.
+
+It points at staging and opens on the `p-test` handle; change the handle in the field at
+the top of the screen, or the host with the Staging/Production control.
+
+Note what it can't tell you: a local path reference skips distribution entirely. Before a
+release, still check that SPM resolves from a tag and that `pod lib lint` passes.
+
+### Running the tests
+
+The package is iOS-only, so `swift test` fails at `no such module 'UIKit'` — SwiftPM
+builds it for macOS. Use a simulator destination instead:
+
+```bash
+xcodebuild test -scheme VoiceboxKit -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+The example app has its own tests, which also compile the whole harness and so catch a
+public API break:
+
+```bash
+xcodebuild test -scheme VoiceboxExample -project Example/VoiceboxExample.xcodeproj -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
 ## License
 
 VoiceboxKit is available under the MIT license. See [LICENSE](LICENSE) for details.

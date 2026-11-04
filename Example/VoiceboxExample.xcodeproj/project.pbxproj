@@ -1,0 +1,434 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		FA000000000000000000001F /* VoiceboxExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000001E /* VoiceboxExampleApp.swift */; };
+		FA0000000000000000000021 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000020 /* ContentView.swift */; };
+		FA0000000000000000000023 /* ExampleUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000022 /* ExampleUI.swift */; };
+		FA0000000000000000000025 /* HarnessModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000024 /* HarnessModel.swift */; };
+		FA0000000000000000000027 /* Scenarios.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000026 /* Scenarios.swift */; };
+		FA0000000000000000000029 /* UIKitPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000028 /* UIKitPresenter.swift */; };
+		FA000000000000000000002B /* ScenariosTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000002A /* ScenariosTests.swift */; };
+		FA000000000000000000001B /* VoiceboxKit in Frameworks */ = {isa = PBXBuildFile; productRef = FA000000000000000000001A /* VoiceboxKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		FA000000000000000000001D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FA0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FA0000000000000000000006;
+			remoteInfo = VoiceboxExample;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		FA0000000000000000000008 /* VoiceboxExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceboxExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA0000000000000000000009 /* VoiceboxExampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoiceboxExampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA000000000000000000001E /* VoiceboxExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceboxExampleApp.swift; sourceTree = "<group>"; };
+		FA0000000000000000000020 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		FA0000000000000000000022 /* ExampleUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExampleUI.swift; sourceTree = "<group>"; };
+		FA0000000000000000000024 /* HarnessModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessModel.swift; sourceTree = "<group>"; };
+		FA0000000000000000000026 /* Scenarios.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenarios.swift; sourceTree = "<group>"; };
+		FA0000000000000000000028 /* UIKitPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitPresenter.swift; sourceTree = "<group>"; };
+		FA000000000000000000002A /* ScenariosTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenariosTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FA000000000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA000000000000000000001B /* VoiceboxKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA000000000000000000000E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		FA0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				FA0000000000000000000004 /* VoiceboxExample */,
+				FA0000000000000000000005 /* VoiceboxExampleTests */,
+				FA0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FA0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FA0000000000000000000008 /* VoiceboxExample.app */,
+				FA0000000000000000000009 /* VoiceboxExampleTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FA0000000000000000000004 /* VoiceboxExample */ = {
+			isa = PBXGroup;
+			children = (
+				FA000000000000000000001E /* VoiceboxExampleApp.swift */,
+				FA0000000000000000000020 /* ContentView.swift */,
+				FA0000000000000000000022 /* ExampleUI.swift */,
+				FA0000000000000000000024 /* HarnessModel.swift */,
+				FA0000000000000000000026 /* Scenarios.swift */,
+				FA0000000000000000000028 /* UIKitPresenter.swift */,
+			);
+			path = VoiceboxExample;
+			sourceTree = "<group>";
+		};
+		FA0000000000000000000005 /* VoiceboxExampleTests */ = {
+			isa = PBXGroup;
+			children = (
+				FA000000000000000000002A /* ScenariosTests.swift */,
+			);
+			path = VoiceboxExampleTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FA0000000000000000000006 /* VoiceboxExample */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA0000000000000000000011 /* Build configuration list for PBXNativeTarget "VoiceboxExample" */;
+			buildPhases = (
+				FA000000000000000000000A /* Sources */,
+				FA000000000000000000000B /* Frameworks */,
+				FA000000000000000000000C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VoiceboxExample;
+			packageProductDependencies = (
+				FA000000000000000000001A /* VoiceboxKit */,
+			);
+			productName = VoiceboxExample;
+			productReference = FA0000000000000000000008 /* VoiceboxExample.app */;
+			productType = "com.apple.product-type.application";
+		};
+		FA0000000000000000000007 /* VoiceboxExampleTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA0000000000000000000012 /* Build configuration list for PBXNativeTarget "VoiceboxExampleTests" */;
+			buildPhases = (
+				FA000000000000000000000D /* Sources */,
+				FA000000000000000000000E /* Frameworks */,
+				FA000000000000000000000F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FA000000000000000000001C /* PBXTargetDependency */,
+			);
+			name = VoiceboxExampleTests;
+			productName = VoiceboxExampleTests;
+			productReference = FA0000000000000000000009 /* VoiceboxExampleTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FA0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					FA0000000000000000000006 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					FA0000000000000000000007 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = FA0000000000000000000006;
+					};
+				};
+			};
+			buildConfigurationList = FA0000000000000000000010 /* Build configuration list for PBXProject "VoiceboxExample" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = FA0000000000000000000002;
+			packageReferences = (
+				FA0000000000000000000019 /* XCLocalSwiftPackageReference ".." */,
+			);
+			productRefGroup = FA0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FA0000000000000000000006 /* VoiceboxExample */,
+				FA0000000000000000000007 /* VoiceboxExampleTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FA000000000000000000000C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA000000000000000000000F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FA000000000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA000000000000000000001F /* VoiceboxExampleApp.swift in Sources */,
+				FA0000000000000000000021 /* ContentView.swift in Sources */,
+				FA0000000000000000000023 /* ExampleUI.swift in Sources */,
+				FA0000000000000000000025 /* HarnessModel.swift in Sources */,
+				FA0000000000000000000027 /* Scenarios.swift in Sources */,
+				FA0000000000000000000029 /* UIKitPresenter.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA000000000000000000000D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA000000000000000000002B /* ScenariosTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		FA000000000000000000001C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FA0000000000000000000006 /* VoiceboxExample */;
+			targetProxy = FA000000000000000000001D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		FA0000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphoneos;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		FA0000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphoneos;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		FA0000000000000000000015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_EXTENSIONS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Attach your location to a voice message, when you choose to.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a voice message.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.voicebox.VoiceboxExample;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FA0000000000000000000016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_EXTENSIONS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Attach your location to a voice message, when you choose to.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record a voice message.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.voicebox.VoiceboxExample;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FA0000000000000000000017 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.voicebox.VoiceboxExampleTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VoiceboxExample.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VoiceboxExample";
+			};
+			name = Debug;
+		};
+		FA0000000000000000000018 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.voicebox.VoiceboxExampleTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VoiceboxExample.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VoiceboxExample";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		FA0000000000000000000010 /* Build configuration list for PBXProject "VoiceboxExample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA0000000000000000000013 /* Debug */,
+				FA0000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA0000000000000000000011 /* Build configuration list for PBXNativeTarget "VoiceboxExample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA0000000000000000000015 /* Debug */,
+				FA0000000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA0000000000000000000012 /* Build configuration list for PBXNativeTarget "VoiceboxExampleTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA0000000000000000000017 /* Debug */,
+				FA0000000000000000000018 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		FA0000000000000000000019 /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FA000000000000000000001A /* VoiceboxKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VoiceboxKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = FA0000000000000000000001 /* Project object */;
+}

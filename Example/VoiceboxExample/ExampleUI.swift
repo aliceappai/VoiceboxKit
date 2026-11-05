@@ -48,7 +48,8 @@ struct OutlinedButtonStyle: ButtonStyle {
     }
 }
 
-/// The status card that flashes the latest callback, as on Android.
+/// The card that flashes the latest callback, as on Android. Clears itself
+/// after three seconds.
 struct StatusCard: View {
     let message: String
     let isFailure: Bool
@@ -65,32 +66,5 @@ struct StatusCard: View {
                           ? Color(uiColor: .systemRed).opacity(0.12)
                           : Color.accentColor.opacity(0.12))
             )
-    }
-}
-
-/// Labelled switch with an explanatory caption.
-struct ToggleRow: View {
-    let title: String
-    let note: String?
-    @Binding var isOn: Bool
-
-    init(_ title: String, note: String? = nil, isOn: Binding<Bool>) {
-        self.title = title
-        self.note = note
-        self._isOn = isOn
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Toggle(title, isOn: $isOn)
-                .font(.subheadline)
-                .tint(.accentColor)
-            if let note {
-                Text(note)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
     }
 }

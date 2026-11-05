@@ -10,10 +10,8 @@
 		FA000000000000000000001F /* VoiceboxExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000001E /* VoiceboxExampleApp.swift */; };
 		FA0000000000000000000021 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000020 /* ContentView.swift */; };
 		FA0000000000000000000023 /* ExampleUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000022 /* ExampleUI.swift */; };
-		FA0000000000000000000025 /* HarnessModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000024 /* HarnessModel.swift */; };
-		FA0000000000000000000027 /* Scenarios.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000026 /* Scenarios.swift */; };
 		FA0000000000000000000029 /* UIKitPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000028 /* UIKitPresenter.swift */; };
-		FA000000000000000000002B /* ScenariosTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000002A /* ScenariosTests.swift */; };
+		FA000000000000000000002B /* DemoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000002A /* DemoTests.swift */; };
 		FA000000000000000000001B /* VoiceboxKit in Frameworks */ = {isa = PBXBuildFile; productRef = FA000000000000000000001A /* VoiceboxKit */; };
 /* End PBXBuildFile section */
 
@@ -33,10 +31,8 @@
 		FA000000000000000000001E /* VoiceboxExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceboxExampleApp.swift; sourceTree = "<group>"; };
 		FA0000000000000000000020 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		FA0000000000000000000022 /* ExampleUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExampleUI.swift; sourceTree = "<group>"; };
-		FA0000000000000000000024 /* HarnessModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessModel.swift; sourceTree = "<group>"; };
-		FA0000000000000000000026 /* Scenarios.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenarios.swift; sourceTree = "<group>"; };
 		FA0000000000000000000028 /* UIKitPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitPresenter.swift; sourceTree = "<group>"; };
-		FA000000000000000000002A /* ScenariosTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenariosTests.swift; sourceTree = "<group>"; };
+		FA000000000000000000002A /* DemoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,8 +78,6 @@
 				FA000000000000000000001E /* VoiceboxExampleApp.swift */,
 				FA0000000000000000000020 /* ContentView.swift */,
 				FA0000000000000000000022 /* ExampleUI.swift */,
-				FA0000000000000000000024 /* HarnessModel.swift */,
-				FA0000000000000000000026 /* Scenarios.swift */,
 				FA0000000000000000000028 /* UIKitPresenter.swift */,
 			);
 			path = VoiceboxExample;
@@ -92,7 +86,7 @@
 		FA0000000000000000000005 /* VoiceboxExampleTests */ = {
 			isa = PBXGroup;
 			children = (
-				FA000000000000000000002A /* ScenariosTests.swift */,
+				FA000000000000000000002A /* DemoTests.swift */,
 			);
 			path = VoiceboxExampleTests;
 			sourceTree = "<group>";
@@ -204,8 +198,6 @@
 				FA000000000000000000001F /* VoiceboxExampleApp.swift in Sources */,
 				FA0000000000000000000021 /* ContentView.swift in Sources */,
 				FA0000000000000000000023 /* ExampleUI.swift in Sources */,
-				FA0000000000000000000025 /* HarnessModel.swift in Sources */,
-				FA0000000000000000000027 /* Scenarios.swift in Sources */,
 				FA0000000000000000000029 /* UIKitPresenter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -214,7 +206,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FA000000000000000000002B /* ScenariosTests.swift in Sources */,
+				FA000000000000000000002B /* DemoTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

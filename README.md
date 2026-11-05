@@ -358,23 +358,35 @@ If the network is unavailable and no cached content exists, VoiceboxKit displays
 
 ## Example App
 
-`Example/VoiceboxExample.xcodeproj` is a harness that reaches every scenario the SDK
-exposes: all seven presentation modes, both API styles, the theme presets, the global
-flags, preloading, and sessions. Callbacks land in an on-screen event log.
+`Example/VoiceboxExample.xcodeproj` is a small app showing how to open the recorder. It
+mirrors the Android example screen for screen: a button per presentation mode under
+**SwiftUI API**, the `VoiceboxView` path under **UIKit API**, and a status card that
+flashes each callback as it arrives.
 
 ```bash
 open Example/VoiceboxExample.xcodeproj
 ```
 
-It depends on this repository through a **local** package reference, not a version or a
-tag — edit anything under `Sources/` and ⌘R picks it up. There is nothing to re-add and
-no pin to bump while you work on the SDK.
+Set your own handle in `Demo.handle` at the top of `VoiceboxExampleApp.swift`, then run.
+Whichever button you press, the integration underneath is a single modifier:
 
-It points at staging and opens on the `p-test` handle; change the handle in the field at
-the top of the screen, or the host with the Staging/Production control.
+```swift
+.voicebox(isPresented: $isRecorderPresented, handle: "your-handle")
+```
 
-Note what it can't tell you: a local path reference skips distribution entirely. Before a
-release, still check that SPM resolves from a tag and that `pod lib lint` passes.
+Everything after `handle` is optional — presentation mode, theme, params and the
+callbacks all have defaults. The comments in `ContentView.swift` list them; this
+README's sections above cover each in full.
+
+It currently opens on `p-test`, a stand-in that exists only on staging — so `init()` also
+sets `VoiceboxKit.baseURL` to the staging host. Both lines go together, and both come out
+when you point it at a real voicebox: a normal integration never sets `baseURL`, because
+it already defaults to production.
+
+The project depends on this repository through a **local** package reference rather than
+a version or a tag, so it always builds against the working copy you have checked out.
+That does mean it never exercises distribution: before a release, check separately that
+SPM resolves from a tag and that `pod lib lint` passes.
 
 ### Running the tests
 
@@ -385,8 +397,8 @@ builds it for macOS. Use a simulator destination instead:
 xcodebuild test -scheme VoiceboxKit -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-The example app has its own tests, which also compile the whole harness and so catch a
-public API break:
+The example app has its own tests, which compile it against the SDK and so catch a public
+API break, plus guard its configuration:
 
 ```bash
 xcodebuild test -scheme VoiceboxExample -project Example/VoiceboxExample.xcodeproj -destination 'platform=iOS Simulator,name=iPhone 17 Pro'

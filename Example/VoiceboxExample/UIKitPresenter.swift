@@ -1,78 +1,66 @@
 import UIKit
 import VoiceboxKit
 
-/// The UIKit presentation path, and the only way to observe a load failure:
-/// `voiceboxDidFail` lives on `VoiceboxDelegate` and the SwiftUI `.voicebox()`
-/// modifier has no equivalent callback.
+/// Presents the recorder through the UIKit API — the counterpart of Android's
+/// `VoiceboxView(handle).present(activity)`.
+///
+/// Use this when the calling screen isn't SwiftUI. It reports the same events
+/// as the `.voicebox()` modifier, through `VoiceboxDelegate` instead of
+/// closures, plus `voiceboxDidFail` which the modifier has no equivalent for.
 final class UIKitVoiceboxPresenter: NSObject, VoiceboxDelegate {
 
-    private weak var model: HarnessModel?
-
-    /// `VoiceboxView.delegate` is weak and `present(from:)` doesn't take ownership,
-    /// so the harness holds the view until it is dismissed.
+    /// `VoiceboxView.delegate` is `weak`, so whoever presents the view has to
+    /// keep a reference to it. Without this the view deallocates on the way out
+    /// of `present(handle:)` and no callback ever arrives.
     private var presented: VoiceboxView?
 
-    init(model: HarnessModel) {
-        self.model = model
-        super.init()
+    private let onEvent: (String, Bool) -> Void
+
+    /// - Parameter onEvent: called with a message and whether it is a failure.
+    init(onEvent: @escaping (String, Bool) -> Void) {
+        self.onEvent = onEvent
     }
 
-    /// Presents with the screen's current scenario, through the UIKit API.
-    func present(handle: String, scenario model: HarnessModel) {
-        guard let host = Self.topViewController() else {
-            model.record("No view controller to present from", isFailure: true)
-            return
-        }
-
-        let view = VoiceboxView(handle: handle, params: model.params, theme: model.themeChoice.theme)
-        view.presentationMode = model.mode.mode
-        view.showCloseButton = model.showCloseButton
-        view.hidePageChrome = model.hidePageChrome
-        view.entranceAnimation = model.entranceAnimation
+    func present(handle: String) {
+        guard let host = Self.topViewController() else { return }
+        let view = VoiceboxView(handle: handle)
         view.delegate = self
         presented = view
-
-        model.record("Presenting via UIKit — \(model.mode.title)")
         view.present(from: host)
     }
 
-    // MARK: VoiceboxDelegate
+    // MARK: - VoiceboxDelegate
 
     func voiceboxDidFinishRecording(_ voiceboxView: VoiceboxView) {
-        model?.record("UIKit: recording complete ✓")
+        onEvent("Recording complete ✓", false)
     }
 
     func voiceboxDidSubmitMessage(_ voiceboxView: VoiceboxView) {
-        model?.record("UIKit: message submitted ✓")
+        onEvent("Message submitted ✓", false)
     }
 
     func voiceboxDidDismiss(_ voiceboxView: VoiceboxView) {
+        onEvent("Voicebox dismissed", false)
         presented = nil
-        model?.record("UIKit: dismissed")
     }
 
     func voiceboxDidFail(_ voiceboxView: VoiceboxView, error: Error) {
-        model?.record("UIKit: failed — \(error.localizedDescription)", isFailure: true)
+        onEvent("Error: \(error.localizedDescription)", true)
     }
 
-    func voicebox(_ voiceboxView: VoiceboxView, didResolveAnonymousSessionId sessionId: String) {
-        model?.captureSessionId(sessionId)
-    }
+    // MARK: - Helpers
 
-    // MARK: Helpers
-
-    /// Top-most presented controller in the active scene.
+    /// The view controller to present from. A SwiftUI app has no controller to
+    /// hand over, so walk down from the active window's root.
     static func topViewController() -> UIViewController? {
-        let window = UIApplication.shared.connectedScenes
+        let scene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?
-            .windows
-            .first { $0.isKeyWindow }
+            .first { $0.activationState == .foregroundActive }
 
-        var controller = window?.rootViewController
-        while let next = controller?.presentedViewController {
-            controller = next
+        var top = scene?.windows.first(where: \.isKeyWindow)?.rootViewController
+        while let presented = top?.presentedViewController {
+            top = presented
         }
-        return controller
+        return top
     }
 }

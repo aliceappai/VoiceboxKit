@@ -356,6 +356,54 @@ VoiceboxView(handle: "feedback", theme: .lightCircle)
 
 If the network is unavailable and no cached content exists, VoiceboxKit displays a native offline fallback UI with a retry button. Cached content is always served first when available.
 
+## Example App
+
+`Example/VoiceboxExample.xcodeproj` is a small app showing how to open the recorder. It
+mirrors the Android example screen for screen: a button per presentation mode under
+**SwiftUI API**, the `VoiceboxView` path under **UIKit API**, and a status card that
+flashes each callback as it arrives.
+
+```bash
+open Example/VoiceboxExample.xcodeproj
+```
+
+Set your own handle in `Demo.handle` at the top of `VoiceboxExampleApp.swift`, then run.
+Whichever button you press, the integration underneath is a single modifier:
+
+```swift
+.voicebox(isPresented: $isRecorderPresented, handle: "your-handle")
+```
+
+Everything after `handle` is optional — presentation mode, theme, params and the
+callbacks all have defaults. The comments in `ContentView.swift` list them; this
+README's sections above cover each in full.
+
+It currently opens on `p-test`, a stand-in that exists only on staging — so `init()` also
+sets `VoiceboxKit.baseURL` to the staging host. Both lines go together, and both come out
+when you point it at a real voicebox: a normal integration never sets `baseURL`, because
+it already defaults to production.
+
+The project depends on this repository through a **local** package reference rather than
+a version or a tag, so it always builds against the working copy you have checked out.
+That does mean it never exercises distribution: before a release, check separately that
+SPM resolves from a tag and that `pod lib lint` passes.
+
+### Running the tests
+
+The package is iOS-only, so `swift test` fails at `no such module 'UIKit'` — SwiftPM
+builds it for macOS. Use a simulator destination instead:
+
+```bash
+xcodebuild test -scheme VoiceboxKit -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+The example app has its own tests, which compile it against the SDK and so catch a public
+API break, plus guard its configuration:
+
+```bash
+xcodebuild test -scheme VoiceboxExample -project Example/VoiceboxExample.xcodeproj -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
 ## License
 
 VoiceboxKit is available under the MIT license. See [LICENSE](LICENSE) for details.

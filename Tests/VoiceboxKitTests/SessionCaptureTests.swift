@@ -140,10 +140,17 @@ final class SessionCaptureTests: XCTestCase {
     /// (there is no runtime surface for "which line ran first").
     func testAdoptionNudgesTheScriptAfterRegisteringTheHandler() {
         let source = VoiceboxKitSourceReader.read("VoiceboxViewController.swift")
-        guard let register = source.range(of: "add(self, name: Self.sessionMessageName)"),
+        guard let register = source.range(of: "registerScriptMessageHandlers(on: webView.configuration.userContentController)"),
               let nudge = source.range(of: "sessionRereadSnippet") else {
             return XCTFail("adoption must register the session handler and then nudge the page")
         }
+        guard let namesStart = source.range(of: "var scriptMessageNames: [String]"),
+              let namesEnd = source.range(of: "return names", range: namesStart.upperBound..<source.endIndex)
+        else {
+            return XCTFail("could not find the registered script message names")
+        }
+        XCTAssertTrue(source[namesStart.upperBound..<namesEnd.lowerBound].contains("Self.sessionMessageName"),
+                      "the session handler must be among the names registered at adoption")
         XCTAssertTrue(register.upperBound < nudge.lowerBound,
                       "nudging before the handler exists delivers the id to nobody — the original bug")
     }

@@ -257,6 +257,15 @@ struct VoiceboxRepresentable: UIViewControllerRepresentable {
         uiViewController.onBackgroundColorDetected = onBackgroundColorDetected
     }
 
+    /// SwiftUI is done with this controller: the `.sheet` / `.fullScreenCover` holding it has
+    /// closed, or the content was rebuilt without it. Unload the recorder page now so it gets
+    /// `pagehide` — the controller's own `viewDidDisappear` check cannot be counted on for a
+    /// representable torn down inside a sheet (see `viewWillDisappear`). Idempotent, so it is
+    /// harmless when `viewDidDisappear` got there first.
+    static func dismantleUIViewController(_ uiViewController: VoiceboxViewController, coordinator: Coordinator) {
+        uiViewController.unloadForDismissal()
+    }
+
     // MARK: - Coordinator (Delegate Bridge)
 
     /// Bridges `VoiceboxDelegate` callbacks to SwiftUI closures.

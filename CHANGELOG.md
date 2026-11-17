@@ -20,13 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   place the handlers came off, never ran. Handlers now go through a weak proxy
   (`WeakScriptMessageHandler`), so nothing the WebView owns retains the controller.
 
-- **Closing the recorder mid-recording now behaves like closing a browser tab.** Because the
-  page never unloaded, it never got `pagehide`, so vbx-web's "leave" beacon never went out
-  and the server left the take `capturing` for ~30 min until its sweeper ran, instead of
-  merging it within ~30 s (vbx-web `docs/RECORDER.md`, *When the visitor does not finish*).
-  On a real dismissal the SDK now navigates the page to `about:blank`, which gives it
-  `pagehide` with `persisted: false`, and keeps the WebView alive until that navigation has
-  finished (at most 5 s) so the page is not torn down first.
+- **A dismissed recorder's page is now unloaded, instead of being left running.** Closing
+  the recorder used to leave its document loaded and executing, because the WebView was
+  never navigated away from — so the page never got `pagehide` and never ran its own
+  teardown. On a real dismissal the SDK now navigates the page to `about:blank` and keeps
+  the WebView alive until that navigation has finished (at most 5 s), so the page unloads
+  in order rather than vanishing with its process.
+
+  ⚠️ **This does not yet deliver vbx-web's "leave" beacon.** What motivated the change is
+  the take left `capturing` for ~30 min until the server's sweeper runs, instead of being
+  merged within ~30 s (vbx-web `docs/RECORDER.md`, *When the visitor does not finish*).
+  That beacon is sent from `pagehide` only when `persisted` is `false`
+  (`app/javascript/recorder/chunked_capture.js`), and measured on iOS 26.4 the
+  `about:blank` navigation delivers `pagehide` with **`persisted: true`** — WebKit puts the
+  outgoing page into its back/forward cache — so the beacon is still not sent and the take
+  still waits for the sweeper. This was already the case before this release, where no
+  `pagehide` fired at all; nothing is worse, the event simply now exists. Unloading is a
+  prerequisite for fixing it, not the fix: a page cannot tell a cache suspend from a WebView
+  being destroyed, so the leave has to become explicit between the SDK and vbx-web.
 
   "Real dismissal" means the recorder is going away for good: from `viewDidDisappear` when
   the controller or a container it sits in is being dismissed or removed from its parent
